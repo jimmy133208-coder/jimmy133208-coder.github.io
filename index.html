@@ -28,6 +28,13 @@ body{background:#121417;color:#e9ecef;padding:16px;}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
 .chip{padding:4px 12px;border-radius:999px;border:1px solid #374151;background:#1e2227;color:#94a3b8;font-size:12px;cursor:pointer;user-select:none;}
 .chip.active{background:#2563eb;border-color:#2563eb;color:#fff;}
+.ctrl-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:#1a1e24;border:1px solid #333;border-radius:8px;font-size:13px;}
+.ctrl-bar .lbl{color:#94a3b8;}
+.period-group{display:inline-flex;gap:4px;}
+.period-btn{padding:4px 12px;border-radius:6px;border:1px solid #374151;background:#1e2227;color:#94a3b8;font-size:12px;cursor:pointer;user-select:none;}
+.period-btn.active{background:#2563eb;border-color:#2563eb;color:#fff;}
+.ctrl-bar select{padding:4px 8px;border-radius:6px;border:1px solid #374151;background:#1e2227;color:#e9ecef;font-size:12px;cursor:pointer;}
+.ctrl-bar .apply-btn{padding:5px 14px;border-radius:6px;border:none;background:#059669;color:#fff;font-weight:600;font-size:12px;cursor:pointer;}
 .log-wrap{background:#0a0b0d;border:1px solid #333;padding:10px;height:200px;overflow:auto;border-radius:8px;margin-bottom:12px;white-space:pre-wrap;font-family:Consolas,Menlo,monospace;font-size:11px;line-height:1.5;}
 .log-success{color:#4ade80;}
 .log-warn{color:#facc15;}
@@ -84,40 +91,55 @@ body{background:#121417;color:#e9ecef;padding:16px;}
     <span class="chip" data-cat="cn_macro">中国宏观</span>
     <span class="chip" data-cat="shipping">航运物流</span>
   </div>
-  <div class="status-bar"><span id="statusBar">状态：空闲｜自动刷新：关闭</span><span class="src-note">FRED 数据经公共 CORS 代理 cors.eu.org 转发，偶发延迟属正常</span></div>
+  <div class="status-bar"><span id="statusBar">状态：空闲｜自动刷新：关闭</span><span class="src-note">FRED 数据经公共 CORS 代理转发（allorigins/cors.eu.org 双通道），偶发延迟属正常</span></div>
+  <div class="ctrl-bar">
+    <span class="lbl">K线周期</span>
+    <div class="period-group" id="periodGroup">
+      <span class="period-btn active" data-period="day">日K</span>
+      <span class="period-btn" data-period="week">周K</span>
+      <span class="period-btn" data-period="month">月K</span>
+      <span class="period-btn" data-period="year">年K</span>
+    </div>
+    <span class="lbl">时间范围</span>
+    <select id="startYear"></select>
+    <span class="lbl">~</span>
+    <select id="endYear"></select>
+    <button class="apply-btn" id="applyRange">应用范围</button>
+    <span class="lbl" id="rangeHint" style="color:#64748b;font-size:12px;"></span>
+  </div>
   <div class="log-wrap" id="logPanel"></div>
   <div class="grid" id="indicatorGrid"></div>
 </div>
 <script>
 // ==================== 配置区 ====================
-const CORS_PROXY = "https://cors.eu.org/";               // FRED 跨域代理（主）
-const CORS_PROXY2 = "https://api.allorigins.win/raw?url="; // 备用代理
+const CORS_PROXY = "https://api.allorigins.win/raw?url="; // FRED 跨域代理（主）
+const CORS_PROXY2 = "https://cors.eu.org/";                // 备用代理
 const AUTO_REFRESH_INTERVAL = 15 * 60 * 1000;
 const CACHE_HIGH_TTL = 10 * 60 * 1000;
 const CACHE_LOW_TTL = 60 * 60 * 1000;
-const HIST_LEN = 20; // 迷你图点数
 
 // 指标清单（54 项）
-// src: em=东方财富行情 / tx=腾讯行情 / fred=FRED代理 / emdc=东方财富数据中心(JSONP) / sina=新浪宏观(JSONP)
+// src: em=东方财富行情 / tx=腾讯行情(实时) / fred=FRED代理 / emdc=东方财富数据中心(JSONP)
+// histSrc: 历史数据源: sina=新浪全球期货日K / fred=FRED 日频 / tx=腾讯K线 / none=无免费历史源
 const indicatorList = [
   // ========== 高频：美股指数 ==========
-  {id:"nasdaq", name:"纳斯达克指数", src:"em",  secid:"100.NDX",     warnLow:10000, warnHigh:22000, unit:"点", cat:"us_stock", highFreq:true},
-  {id:"sp500",  name:"标普500指数",  src:"em",  secid:"100.SPX",     warnLow:3000,  warnHigh:6500,  unit:"点", cat:"us_stock", highFreq:true},
-  {id:"vix",    name:"VIX恐慌指数",  src:"tx",  code:"usVIX",        warnLow:12,    warnHigh:35,    unit:"点", cat:"us_stock", highFreq:true},
+  {id:"nasdaq", name:"纳斯达克指数", src:"em",  secid:"100.NDX",     histSrc:"none", warnLow:10000, warnHigh:22000, unit:"点", cat:"us_stock", highFreq:true},
+  {id:"sp500",  name:"标普500指数",  src:"em",  secid:"100.SPX",     histSrc:"none", warnLow:3000,  warnHigh:6500,  unit:"点", cat:"us_stock", highFreq:true},
+  {id:"vix",    name:"VIX恐慌指数",  src:"tx",  code:"usVIX",        histSrc:"fred", histSeries:"VIXCLS", warnLow:12, warnHigh:35, unit:"点", cat:"us_stock", highFreq:true},
   // ========== 高频：全球股指 ==========
-  {id:"sse",      name:"上证指数",   src:"em",  secid:"1.000001",    warnLow:2400, warnHigh:3800,  unit:"点", cat:"global_index", highFreq:true},
-  {id:"csi500",   name:"中证500指数", src:"em",  secid:"1.000905",    warnLow:4000, warnHigh:7500,  unit:"点", cat:"global_index", highFreq:true},
-  {id:"hk_hsi",   name:"恒生指数",   src:"em",  secid:"100.HSI",     warnLow:14000,warnHigh:26000, unit:"点", cat:"global_index", highFreq:true},
-  {id:"nikkei225",name:"日经225",    src:"em",  secid:"100.N225",    warnLow:22000,warnHigh:42000, unit:"点", cat:"global_index", highFreq:true},
-  {id:"kospi",    name:"韩国KOSPI",  src:"em",  secid:"100.KS11",    warnLow:1800, warnHigh:3200,  unit:"点", cat:"global_index", highFreq:true},
-  {id:"australia_asx",name:"澳洲ASX200",src:"em",secid:"100.AS51",    warnLow:5000, warnHigh:8000,  unit:"点", cat:"global_index", highFreq:true},
-  {id:"canada_tsx",name:"加拿大TSX", src:"tx",  code:"caTSX",        warnLow:15000,warnHigh:23000, unit:"点", cat:"global_index", highFreq:true},
-  {id:"germany_dax",name:"德国DAX",  src:"em",  secid:"100.GDAXI",   warnLow:10000,warnHigh:18000, unit:"点", cat:"global_index", highFreq:true},
-  {id:"france_cac40",name:"法国CAC40",src:"em", secid:"100.FCHI",    warnLow:4000, warnHigh:8000,  unit:"点", cat:"global_index", highFreq:true},
-  {id:"italy_mib",name:"意大利富时MIB",src:"tx",code:"itMIB",        warnLow:16000,warnHigh:30000, unit:"点", cat:"global_index", highFreq:true},
-  {id:"spain_ibex",name:"西班牙IBEX35",src:"em",secid:"100.IBEX",    warnLow:7000, warnHigh:12000, unit:"点", cat:"global_index", highFreq:true},
-  {id:"eurostoxx50",name:"欧洲斯托克50",src:"em",secid:"100.SX5E",   warnLow:2500, warnHigh:4800,  unit:"点", cat:"global_index", highFreq:true},
-  {id:"ftse100", name:"富时100",     src:"tx",  code:"gbFTSE",       warnLow:5000, warnHigh:8500,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"sse",      name:"上证指数",   src:"em",  secid:"1.000001",    histSrc:"tx", histCode:"sh000001", warnLow:2400, warnHigh:3800, unit:"点", cat:"global_index", highFreq:true},
+  {id:"csi500",   name:"中证500指数", src:"em",  secid:"1.000905",    histSrc:"tx", histCode:"sh000905", warnLow:4000, warnHigh:7500, unit:"点", cat:"global_index", highFreq:true},
+  {id:"hk_hsi",   name:"恒生指数",   src:"em",  secid:"100.HSI",     histSrc:"tx", histCode:"hkHSI",  warnLow:14000,warnHigh:26000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"nikkei225",name:"日经225",    src:"em",  secid:"100.N225",    histSrc:"none", warnLow:22000,warnHigh:42000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"kospi",    name:"韩国KOSPI",  src:"em",  secid:"100.KS11",    histSrc:"none", warnLow:1800, warnHigh:3200, unit:"点", cat:"global_index", highFreq:true},
+  {id:"australia_asx",name:"澳洲ASX200",src:"em",secid:"100.AS51",    histSrc:"none", warnLow:5000, warnHigh:8000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"singapore_sti",name:"新加坡海峡时报",src:"em",secid:"100.STI", histSrc:"none", warnLow:2500, warnHigh:5000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"germany_dax",name:"德国DAX",  src:"em",  secid:"100.GDAXI",   histSrc:"none", warnLow:10000,warnHigh:18000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"france_cac40",name:"法国CAC40",src:"em", secid:"100.FCHI",    histSrc:"none", warnLow:4000, warnHigh:8000,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"india_sensex",name:"印度孟买SENSEX",src:"em",secid:"100.SENSEX", histSrc:"none", warnLow:30000,warnHigh:90000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"spain_ibex",name:"西班牙IBEX35",src:"em",secid:"100.IBEX",    histSrc:"none", warnLow:7000, warnHigh:12000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"eurostoxx50",name:"欧洲斯托克50",src:"em",secid:"100.SX5E",   histSrc:"none", warnLow:2500, warnHigh:4800,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"ftse100", name:"富时100",     src:"em",  secid:"100.FTSE",    histSrc:"none", warnLow:5000, warnHigh:8500,  unit:"点", cat:"global_index", highFreq:true},
   // ========== 高频：美债与利率 ==========
   {id:"us10y", name:"美债10年期收益率", src:"fred", series:"DGS10", warnLow:1, warnHigh:5.5, unit:"%", cat:"us_bond", highFreq:true},
   {id:"us2y",  name:"美债2年期收益率",  src:"fred", series:"DGS2",  warnLow:0.5,warnHigh:6,   unit:"%", cat:"us_bond", highFreq:true},
@@ -125,14 +147,14 @@ const indicatorList = [
   {id:"dxy",     name:"美元指数DXY",   src:"em", secid:"100.UDI",    warnLow:90,  warnHigh:115,  unit:"", cat:"fx", highFreq:true},
   {id:"eur_usd", name:"欧元兑美元",    src:"em", secid:"119.EURUSD", warnLow:0.95,warnHigh:1.15, unit:"", cat:"fx", highFreq:true},
   {id:"usd_cnh", name:"美元兑离岸人民币", src:"em", secid:"133.CNHUSD", warnLow:6.5, warnHigh:7.4, unit:"", cat:"fx", highFreq:true, invert:true},
-  // ========== 高频：大宗商品 ==========
-  {id:"gold",    name:"纽约黄金",     src:"tx", code:"hf_GC",   warnLow:1600,warnHigh:2600, unit:"美元/盎司", cat:"commodity", highFreq:true},
-  {id:"silver",  name:"纽约白银",     src:"tx", code:"hf_SI",   warnLow:15,  warnHigh:35,   unit:"美元/盎司", cat:"commodity", highFreq:true},
-  {id:"brent",   name:"布伦特原油",   src:"tx", code:"hf_OIL",  warnLow:50,  warnHigh:130,  unit:"美元/桶", cat:"commodity", highFreq:true},
-  {id:"wti",     name:"WTI原油",      src:"tx", code:"hf_CL",   warnLow:45,  warnHigh:125,  unit:"美元/桶", cat:"commodity", highFreq:true},
-  {id:"copper",  name:"COMEX铜",      src:"tx", code:"hf_CAD",  warnLow:300, warnHigh:600,  unit:"美分/磅", cat:"commodity", highFreq:true},
-  {id:"corn",    name:"CBOT玉米",     src:"tx", code:"hf_C",    warnLow:300, warnHigh:700,  unit:"美分/蒲式耳", cat:"commodity", highFreq:true},
-  {id:"soybean", name:"CBOT大豆",     src:"tx", code:"hf_S",    warnLow:800, warnHigh:1800, unit:"美分/蒲式耳", cat:"commodity", highFreq:true},
+  // ========== 高频：大宗商品（实时腾讯，历史新浪全球期货日K） ==========
+  {id:"gold",    name:"纽约黄金",     src:"tx", code:"hf_GC",  histSrc:"sina", histSymbol:"GC", warnLow:1600,warnHigh:2600, unit:"美元/盎司", cat:"commodity", highFreq:true},
+  {id:"silver",  name:"纽约白银",     src:"tx", code:"hf_SI",  histSrc:"sina", histSymbol:"SI", warnLow:15,  warnHigh:35,   unit:"美元/盎司", cat:"commodity", highFreq:true},
+  {id:"brent",   name:"布伦特原油",   src:"tx", code:"hf_OIL", histSrc:"sina", histSymbol:"OIL", warnLow:50,  warnHigh:130,  unit:"美元/桶", cat:"commodity", highFreq:true},
+  {id:"wti",     name:"WTI原油",      src:"tx", code:"hf_CL",  histSrc:"sina", histSymbol:"CL", warnLow:45,  warnHigh:125,  unit:"美元/桶", cat:"commodity", highFreq:true},
+  {id:"copper",  name:"COMEX铜",      src:"tx", code:"hf_CAD", histSrc:"sina", histSymbol:"HG", warnLow:300, warnHigh:600,  unit:"美分/磅", cat:"commodity", highFreq:true},
+  {id:"corn",    name:"CBOT玉米",     src:"tx", code:"hf_C",   histSrc:"sina", histSymbol:"C",  warnLow:300, warnHigh:700,  unit:"美分/蒲式耳", cat:"commodity", highFreq:true},
+  {id:"soybean", name:"CBOT大豆",     src:"tx", code:"hf_S",   histSrc:"sina", histSymbol:"S",  warnLow:800, warnHigh:1800, unit:"美分/蒲式耳", cat:"commodity", highFreq:true},
   // ========== 低频：美国宏观（FRED） ==========
   {id:"us_pmi",        name:"美国制造业景气(费城联储)",  src:"fred", series:"GACDFSA066MSFRBPHI", warnLow:-10, warnHigh:25, unit:"", cat:"us_macro", highFreq:false},
   {id:"fred_m2_us",    name:"美国M2货币供应量",  src:"fred", series:"M2SL",            warnLow:15000,warnHigh:26000,unit:"十亿美元", cat:"us_macro", highFreq:false},
@@ -145,23 +167,23 @@ const indicatorList = [
   {id:"us_cap_util",   name:"美国产能利用率",    src:"fred", series:"TCU",             warnLow:74,  warnHigh:80,  unit:"%", cat:"us_macro", highFreq:false},
   {id:"us_pce",        name:"美国核心PCE同比",   src:"fred", series:"PCEPILFE",        warnLow:1,   warnHigh:5,   unit:"%", cat:"us_macro", highFreq:false, yoy:true},
   {id:"us_consumer_sent",name:"美国消费者信心",  src:"fred", series:"UMCSENT",         warnLow:50,  warnHigh:110, unit:"", cat:"us_macro", highFreq:false},
-  {id:"us_oil_inventory",name:"美国联邦基金利率(月均)", src:"fred", series:"FEDFUNDS",       warnLow:0,   warnHigh:6,   unit:"%", cat:"us_macro", highFreq:false},
+  {id:"us_fedfunds",   name:"美国联邦基金利率(月均)", src:"fred", series:"FEDFUNDS",   warnLow:0,   warnHigh:6,   unit:"%", cat:"us_macro", highFreq:false},
   {id:"us_gdp_qoq",    name:"美国GDP环比年化",   src:"fred", series:"A191RL1Q225SBEA", warnLow:-2,  warnHigh:5,   unit:"%", cat:"us_macro", highFreq:false},
   {id:"eur_cpi",       name:"欧元区HICP同比",    src:"fred", series:"CP0000EZ19M086NEST", warnLow:0, warnHigh:6, unit:"%", cat:"us_macro", highFreq:false, yoy:true},
   // ========== 低频：中国宏观（东方财富数据中心 JSONP） ==========
   {id:"china_pmi",     name:"中国制造业PMI",  src:"emdc", reportName:"RPT_ECONOMY_PMI",          field:"MAKE_INDEX",           warnLow:48, warnHigh:52, unit:"", cat:"cn_macro", highFreq:false},
   {id:"china_cpi",     name:"中国CPI同比",    src:"emdc", reportName:"RPT_ECONOMY_CPI",          field:"NATIONAL_SAME",        warnLow:-1, warnHigh:3,  unit:"%", cat:"cn_macro", highFreq:false},
   {id:"china_ppi",     name:"中国PPI同比",    src:"emdc", reportName:"RPT_ECONOMY_PPI",          field:"BASE_SAME",            warnLow:-5, warnHigh:2,  unit:"%", cat:"cn_macro", highFreq:false},
-  {id:"china_m2",      name:"中国M2同比",     src:"emdc", reportName:"RPT_ECONOMY_CURRENCY_SUPPLY", field:"BASIC_CURRENCY_SAME", warnLow:8,  warnHigh:13, unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_m2",      name:"中国M2(万亿元)", src:"emdc", reportName:"RPT_ECONOMY_CURRENCY_SUPPLY", fields:{v:"BASIC_CURRENCY", chg:"BASIC_CURRENCY_SAME", vDiv:10000}, warnLow:280, warnHigh:420, unit:"万亿元", cat:"cn_macro", highFreq:false},
   {id:"china_exports", name:"中国出口同比",   src:"emdc", reportName:"RPT_ECONOMY_CUSTOMS",      field:"EXIT_BASE_SAME",       warnLow:-15,warnHigh:15, unit:"%", cat:"cn_macro", highFreq:false},
   {id:"china_imports", name:"中国进口同比",   src:"emdc", reportName:"RPT_ECONOMY_CUSTOMS",      field:"IMPORT_BASE_SAME",     warnLow:-15,warnHigh:15, unit:"%", cat:"cn_macro", highFreq:false},
-  {id:"china_social_fin", name:"新增人民币贷款同比", src:"emdc", reportName:"RPT_ECONOMY_RMB_LOAN", field:"RMB_LOAN_SAME", warnLow:-20, warnHigh:60, unit:"%", cat:"cn_macro", highFreq:false},
-  {id:"china_lpr",     name:"1年期LPR",       src:"emdc", reportName:"RPTA_WEB_RATE",           field:"LPR1Y",                warnLow:2.5, warnHigh:4.5, unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_loan",    name:"新增人民币贷款(当月)", src:"emdc", reportName:"RPT_ECONOMY_RMB_LOAN", fields:{v:"RMB_LOAN"}, warnLow:100, warnHigh:6000, unit:"亿元", cat:"cn_macro", highFreq:false},
+  {id:"china_gdp",     name:"中国GDP同比(季度)",  src:"emdc", reportName:"RPT_ECONOMY_GDP",       field:"SUM_SAME",             warnLow:3,   warnHigh:7,   unit:"%", cat:"cn_macro", highFreq:false},
   // ========== 低频：航运物流 ==========
   {id:"bdi",       name:"波罗的海干散货BDI",  src:"emdc", reportName:"RPT_INDUSTRY_INDEX", field:"INDICATOR_VALUE", filter:'(INDICATOR_ID="EMI00107664")', warnLow:800, warnHigh:3000, unit:"点", cat:"shipping", highFreq:false},
   {id:"bdti",      name:"原油运输指数BDTI",   src:"emdc", reportName:"RPT_INDUSTRY_INDEX", field:"INDICATOR_VALUE", filter:'(INDICATOR_ID="EMI00107668")', warnLow:500, warnHigh:5000, unit:"点", cat:"shipping", highFreq:false},
-  {id:"china_railway", name:"全社会货运量(当月)", src:"sina", field:"freight", warnLow:35, warnHigh:55, unit:"亿吨", cat:"shipping", highFreq:false},
-  {id:"china_port_throughput", name:"沿海港口货物吞吐量(当月)", src:"sina", field:"port", warnLow:10, warnHigh:18, unit:"亿吨", cat:"shipping", highFreq:false}
+  {id:"bci",       name:"海岬型运费指数BCI",  src:"emdc", reportName:"RPT_INDUSTRY_INDEX", field:"INDICATOR_VALUE", filter:'(INDICATOR_ID="EMI00107666")', warnLow:1000, warnHigh:8000, unit:"点", cat:"shipping", highFreq:false},
+  {id:"bcti",      name:"成品油运输指数BCTI", src:"emdc", reportName:"RPT_INDUSTRY_INDEX", field:"INDICATOR_VALUE", filter:'(INDICATOR_ID="EMI00107669")', warnLow:400, warnHigh:3000, unit:"点", cat:"shipping", highFreq:false}
 ];
 
 // ==================== 全局变量 ====================
@@ -175,6 +197,10 @@ let isRunning = false;
 let autoRefreshTimer = null;
 let logTextBuffer = "";
 let currentCat = "all";
+let curPeriod = "day";   // day | week | month | year
+let startY = 2024;
+let endY = 2026;
+const NOW_YEAR = new Date().getFullYear();
 
 function setStatus(text){ statusBar.firstChild.textContent = "状态：" + text; }
 
@@ -206,16 +232,6 @@ async function fetchEMBatch(secids){
   }
   return map;
 }
-// 东方财富 push2his 历史K线（直连）
-async function fetchEMHistory(secid, len=HIST_LEN){
-  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&klt=101&fqt=1&lmt=${len}&end=20500101&fields1=f1,f2,f3&fields2=f51,f52,f53`;
-  const res = await fetch(url);
-  const json = await res.json();
-  if(json.data && json.data.klines){
-    return json.data.klines.map(k => parseFloat(k.split(",")[2]));
-  }
-  return [];
-}
 // 腾讯批量行情（直连，CORS=*）
 async function fetchTXBatch(codes){
   const url = `https://qt.gtimg.cn/q=${codes.join(",")}`;
@@ -240,21 +256,53 @@ async function fetchTXBatch(codes){
   }
   return map;
 }
-// 腾讯历史K线（直连）
-async function fetchTXHistory(code, len=HIST_LEN){
-  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,${len},qfq`;
+// 腾讯历史K线（直连，A股/港股支持起止年份）
+async function fetchTXHistory(code, sy, ey){
+  const param = `${code},day,${sy}-01-01,${ey}-12-31,2000,qfq`;
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${param}`;
   const res = await fetch(url);
   const json = await res.json();
-  const node = json.data[code];
-  const arr = node && (node.day || node.qfqday);
-  if(arr && arr.length){
-    return arr.map(k => parseFloat(k[2]));
+  if(json.data){
+    const node = json.data[code] || json.data[Object.keys(json.data)[0]];
+    if(!node) return null;
+    let arr = null;
+    for(const k of Object.keys(node)){
+      if(Array.isArray(node[k]) && node[k].length){ arr = node[k]; break; }
+    }
+    if(arr && arr.length){
+      const dates = [], values = [];
+      for(const k of arr){
+        dates.push(k[0]); values.push(parseFloat(k[2]));
+      }
+      return {dates, values};
+    }
   }
-  return [];
+  return null;
 }
-// FRED 系列（经 CORS 代理），yoy/mom 计算；返回 {value, history}
-async function fetchFREDSeries(series, len=HIST_LEN+13){
-  const base = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=3bfcf47458e7e97a5a4ad69174d28fe0&file_type=json&sort_order=desc&limit=${len}`;
+// 新浪全球期货日K（JSONP，2016年起全量）
+function fetchSinaGlobalHist(symbol){
+  return new Promise((resolve, reject) => {
+    const cbName = "_hf" + symbol + "_" + Math.random().toString(36).slice(2,8);
+    const s = document.createElement('script');
+    const timer = setTimeout(()=>{ s.remove(); delete window[cbName]; reject(new Error("sina global timeout")); }, 15000);
+    s.onload = () => {
+      clearTimeout(timer); s.remove();
+      const arr = window[cbName]; delete window[cbName];
+      resolve(arr);
+    };
+    s.onerror = () => { clearTimeout(timer); s.remove(); delete window[cbName]; reject(new Error("sina global error")); };
+    s.src = `https://stock.finance.sina.com.cn/futures/api/jsonp.php/var%20${cbName}=/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol=${symbol}`;
+    document.head.appendChild(s);
+  }).then(arr => {
+    if(!arr || !arr.length) return null;
+    const dates = arr.map(o => o.date);
+    const values = arr.map(o => parseFloat(o.close));
+    return {dates, values};
+  });
+}
+// FRED 系列（经 CORS 代理，带起止年份）；返回 {dates, values}
+async function fetchFREDSeries(series, sy, ey){
+  const base = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=3bfcf47458e7e97a5a4ad69174d28fe0&file_type=json&sort_order=asc&observation_start=${sy}-01-01&observation_end=${ey}-12-31&limit=100000`;
   let json = null;
   for(const proxy of [CORS_PROXY, CORS_PROXY2]){
     try{
@@ -264,10 +312,13 @@ async function fetchFREDSeries(series, len=HIST_LEN+13){
     }catch(e){ /* 换下一个代理 */ }
   }
   if(!json || !json.observations || !json.observations.length) return null;
-  const obs = json.observations.slice().reverse().map(o => parseFloat(o.value));
-  const valid = obs.filter(v => !isNaN(v));
-  if(!valid.length) return null;
-  return {value: valid[valid.length-1], history: valid};
+  const dates = [], values = [];
+  for(const o of json.observations){
+    const v = parseFloat(o.value);
+    if(!isNaN(v)){ dates.push(o.date); values.push(v); }
+  }
+  if(!values.length) return null;
+  return {dates, values};
 }
 // 东方财富数据中心 JSONP（script 标签直连，无需代理）
 function fetchEMDC(cfg){
@@ -276,7 +327,7 @@ function fetchEMDC(cfg){
     const params = new URLSearchParams({
       reportName: cfg.reportName,
       columns: "ALL",
-      pageSize: String(cfg.len || HIST_LEN),
+      pageSize: String(cfg.len || 300),
       pageNumber: "1",
       sortColumns: "REPORT_DATE",
       sortTypes: "-1",
@@ -299,33 +350,64 @@ function fetchEMDC(cfg){
     document.head.appendChild(s);
   });
 }
-// 新浪宏观 JSONP（货运/港口）
-function fetchSinaMacro(){
-  return new Promise((resolve, reject) => {
-    const cb = "cb_" + Math.random().toString(36).slice(2,10);
-    const s = document.createElement('script');
-    const timer = setTimeout(()=>{ s.remove(); delete window[cb]; reject(new Error("sina timeout")); }, 15000);
-    window[cb] = (data) => {
-      clearTimeout(timer); s.remove(); delete window[cb];
-      resolve(data);
-    };
-    s.onerror = () => { clearTimeout(timer); s.remove(); delete window[cb]; reject(new Error("sina script error")); };
-    s.src = `https://quotes.sina.cn/mac/api/jsonp_v3.php/${cb}/MacPage_Service.get_pagedata?cate=industry&event=10&from=0&num=1&condition=`;
-    document.head.appendChild(s);
-  });
-}
-// ============ 处理 FRED 派生指标（yoy/mom） ============
-function deriveFRED(item, series){
-  if(!series || series.length < 2) return series;
+// ============ 处理 FRED 派生指标（yoy/mom，保留日期） ============
+function deriveFRED(item, dates, values){
   if(item.yoy){
-    // 同比：当前值 / 12期前 - 1
-    return series.map((v,i) => (i>=12 && series[i-12]!==0) ? (v/series[i-12]-1)*100 : NaN).filter(v=>!isNaN(v));
+    const nd=[], nv=[];
+    for(let i=12;i<values.length;i++){
+      if(values[i-12] && values[i-12] !== 0){ nd.push(dates[i]); nv.push((values[i]/values[i-12]-1)*100); }
+    }
+    return {dates:nd, values:nv};
   }
   if(item.mom){
-    // 月环比（非农：千人）
-    return series.map((v,i) => i>=1 ? (v-series[i-1]) : NaN).filter(v=>!isNaN(v));
+    const nd=[], nv=[];
+    for(let i=1;i<values.length;i++){ nd.push(dates[i]); nv.push(values[i]-values[i-1]); }
+    return {dates:nd, values:nv};
   }
-  return series;
+  return {dates, values};
+}
+// ============ 周期聚合与年份过滤 ============
+function filterYears(dates, values, sy, ey){
+  const nd=[], nv=[];
+  for(let i=0;i<dates.length;i++){
+    const y = parseInt(dates[i].slice(0,4),10);
+    if(!isNaN(y) && y>=sy && y<=ey){ nd.push(dates[i]); nv.push(values[i]); }
+  }
+  return {dates:nd, values:nv};
+}
+function aggregateSeries(dates, values, period){
+  if(!dates || !dates.length) return {dates:[], values:[]};
+  if(period === "day") return {dates, values};
+  const nd=[], nv=[];
+  if(period === "week"){
+    for(let i=0;i<values.length;i+=5){
+      const j = Math.min(i+4, values.length-1);
+      nd.push(dates[j]); nv.push(values[j]);
+    }
+  }else{
+    const keyLen = period === "month" ? 7 : 4;
+    let lastKey = null;
+    for(let i=0;i<dates.length;i++){
+      const key = dates[i].slice(0,keyLen);
+      if(lastKey !== null && key !== lastKey){ nd.push(dates[i-1]); nv.push(values[i-1]); }
+      lastKey = key;
+    }
+    nd.push(dates[dates.length-1]); nv.push(values[values.length-1]);
+  }
+  return {dates:nd, values:nv};
+}
+function pctChg(values){
+  if(!values || values.length < 2) return NaN;
+  const a = values[values.length-2], b = values[values.length-1];
+  if(!isFinite(a) || a === 0) return NaN;
+  return (b/a - 1) * 100;
+}
+// X轴时间标签格式化（随周期变化）
+function fmtAxisDate(d){
+  if(!d) return "";
+  if(curPeriod === "year") return d.slice(0,4);
+  if(curPeriod === "month") return d.slice(0,7);
+  return d.slice(5); // day/week 显示 MM-DD
 }
 
 // ==================== 渲染层 ====================
@@ -350,7 +432,7 @@ function renderCards(){
   });
 }
 
-function updateCard(item, value, history=[], meta={}){
+function updateCard(item, value, hist, meta={}){
   const cardEl = document.getElementById(`card-${item.id}`);
   if(!cardEl) return;
   const valEl = document.getElementById(`val-${item.id}`);
@@ -380,27 +462,36 @@ function updateCard(item, value, history=[], meta={}){
     const t = meta.time ? new Date(meta.time).toLocaleString('zh-CN',{hour12:false}) : "";
     srcEl.textContent = (meta.srcLabel? meta.srcLabel + " · " : "") + t;
   }
-  // 迷你图
-  drawChart(item, history);
-  indicatorData[item.id] = {value, history};
+  // 迷你图：按当前周期聚合显示（缓存保持原始日频，切换周期不重拉数据）
+  const agg = hist && hist.dates ? aggregateSeries(hist.dates, hist.values, curPeriod) : null;
+  drawChart(item, agg);
+  indicatorData[item.id] = {value, hist};
 }
 
-function drawChart(item, history){
+function drawChart(item, agg){
   const chartDom = document.getElementById(`chart-${item.id}`);
-  if(!chartDom || !history || history.length < 2) return;
+  if(!chartDom) return;
+  if(!agg || !agg.values || agg.values.length < 2){
+    // 无历史数据时显示占位提示
+    chartDom.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:#4b5563;font-size:11px;">暂无历史数据源</div>';
+    return;
+  }
   if(chartInstances[item.id]) chartInstances[item.id].dispose();
   chartInstances[item.id] = echarts.init(chartDom);
-  const up = history[history.length-1] >= history[0];
+  const labels = agg.dates.map(fmtAxisDate);
+  const data = agg.values.map((v,i)=>[labels[i], v]);
+  const up = agg.values[agg.values.length-1] >= agg.values[0];
   chartInstances[item.id].setOption({
     animation:false,
     tooltip:{trigger:'axis', formatter: params => {
       const p = params[0];
-      return p.data[0] + "<br/>" + p.data[1].toFixed(2);
+      const rawDate = agg.dates[p.dataIndex];
+      return (rawDate||"") + "<br/>" + p.data[1].toFixed(2);
     }},
     grid:{top:6,right:4,bottom:18,left:38},
-    xAxis:{type:'category', data: history.map((_,i)=>i), axisLabel:{show:false}, axisLine:{lineStyle:{color:'#333'}}},
+    xAxis:{type:'category', data: labels, axisLabel:{fontSize:8, color:'#64748b', interval: Math.max(0, Math.ceil(labels.length/8)-1)}, axisLine:{lineStyle:{color:'#333'}}},
     yAxis:{type:'value', scale:true, axisLabel:{fontSize:9, color:'#64748b'}, splitLine:{lineStyle:{color:'#262b31'}}},
-    series:[{type:'line', data: history, smooth:true, symbol:'none',
+    series:[{type:'line', data, smooth:true, symbol:'none',
       lineStyle:{width:1.4, color: up ? '#f87171' : '#34d399'},
       areaStyle:{color: up ? 'rgba(248,113,113,.12)' : 'rgba(52,211,153,.12)'}}]
   });
@@ -414,43 +505,52 @@ async function fetchOne(item){
       const map = await fetchEMBatch([item.secid]);
       const d = map[item.secid];
       if(d && isFinite(d.price)){
-        let hist = [];
-        try{ hist = await fetchEMHistory(item.secid); }catch(e){}
-        result = {value: d.price, history: hist.length?hist:[d.price], chg: d.chg};
+        let hist = null;
+        try{
+          if(item.histSrc === "tx") hist = await fetchTXHistory(item.histCode, startY, endY);
+        }catch(e){}
+        result = {value: d.price, hist, chg: d.chg};
       }
     } else if(item.src === "tx"){
       const map = await fetchTXBatch([item.code]);
       const d = map[item.code];
       if(d && isFinite(d.price)){
-        let hist = [];
-        try{ hist = await fetchTXHistory(item.code); }catch(e){}
-        result = {value: d.price, history: hist.length?hist:[d.price], chg: d.chg};
+        let hist = null;
+        try{
+          if(item.histSrc === "fred") hist = await fetchFREDSeries(item.histSeries, startY, endY);
+          else if(item.histSrc === "sina") hist = await fetchSinaGlobalHist(item.histSymbol);
+        }catch(e){}
+        result = {value: d.price, hist, chg: d.chg};
       }
     } else if(item.src === "fred"){
-      const raw = await fetchFREDSeries(item.series);
+      const raw = await fetchFREDSeries(item.series, startY, endY);
       if(raw){
-        const series = deriveFRED(item, raw.history);
-        const value = series[series.length-1];
-        result = {value, history: series};
+        const derived = deriveFRED(item, raw.dates, raw.values);
+        if(derived.values.length) result = {value: derived.values[derived.values.length-1], hist: derived, chg: pctChg(derived.values)};
       }
     } else if(item.src === "emdc"){
-      const data = await fetchEMDC({reportName: item.reportName, filter: item.filter});
+      const data = await fetchEMDC({reportName: item.reportName, filter: item.filter, len: 400});
       if(data && data.result && data.result.data && data.result.data.length){
         const rows = data.result.data;
-        const hist = rows.slice().reverse().map(r => parseFloat(r[item.field])).filter(v=>!isNaN(v));
-        if(hist.length) result = {value: hist[hist.length-1], history: hist};
-      }
-    } else if(item.src === "sina"){
-      const data = await fetchSinaMacro();
-      if(data && data.data && data.data["非累计"] && data.data["非累计"].length){
-        const row = data.data["非累计"][0];
-        // 字段下标：2=货运量(亿吨) 10=沿海主要港口货物吞吐量(亿吨)
-        const idx = item.field === "freight" ? 2 : 10;
-        const val = parseFloat(row[idx]);
-        if(isFinite(val)) result = {value: val, history: [val]};
+        const dates = [], vals = [];
+        rows.slice().reverse().forEach(r => {
+          const v = item.fields ? parseFloat(r[item.fields.v]) : parseFloat(r[item.field]);
+          if(!isNaN(v)){
+            dates.push(String(r[item.dateField || "REPORT_DATE"]).slice(0,7));
+            vals.push(item.fields && item.fields.vDiv ? v/item.fields.vDiv : v);
+          }
+        });
+        if(vals.length){
+          const chg = (item.fields && item.fields.chg) ? parseFloat(rows[0][item.fields.chg]) : pctChg(vals);
+          result = {value: vals[vals.length-1], hist: {dates, values: vals}, chg};
+        }
       }
     }
+    // 年份过滤（各源已按范围拉取，此处兜底）
     if(result && isFinite(result.value)){
+      if(result.hist && result.hist.dates){
+        result.hist = filterYears(result.hist.dates, result.hist.values, startY, endY);
+      }
       return result;
     }
     log(`${item.name} 暂无数据`, "error");
@@ -461,12 +561,15 @@ async function fetchOne(item){
   }
 }
 
+const PERIOD_NAMES = {day:"日K", week:"周K", month:"月K", year:"年K"};
+function periodName(p){ return PERIOD_NAMES[p] || p; }
+
 // 高频行情刷新（批量并行）
 async function refreshHighFreq(){
   if(isRunning){ log("任务执行中，禁止重复启动", "warn"); return; }
   isRunning = true;
   setStatus("正在拉取高频行情…");
-  log("===== 刷新【高频行情】（东方财富/腾讯直连，FRED经代理） =====", "success");
+  log(`===== 刷新【高频行情】（${startY}-${endY}，${periodName(curPeriod)}） =====`, "success");
   const highList = indicatorList.filter(i=>i.highFreq);
   // 并发拉取（每批 6 个）
   const batchSize = 6;
@@ -478,8 +581,9 @@ async function refreshHighFreq(){
       const res = results[j];
       if(res){
         cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
-        updateCard(item, res.value, res.history, {chg: res.chg, srcLabel: srcLabelOf(item), time: Date.now()});
-        log(`${item.name}: ${res.value.toFixed(2)}${item.unit||""}`, "success");
+        updateCard(item, res.value, res.hist, {chg: res.chg, srcLabel: srcLabelOf(item), time: Date.now()});
+        const disp = item.invert && res.value !== 0 ? 1/res.value : res.value;
+        log(`${item.name}: ${disp.toFixed(2)}${item.unit||""}`, "success");
       }
     });
     await sleep(300);
@@ -494,7 +598,6 @@ function srcLabelOf(item){
   if(item.src === "tx") return "腾讯行情";
   if(item.src === "fred") return "FRED";
   if(item.src === "emdc") return "东方财富宏观";
-  if(item.src === "sina") return "新浪宏观";
   return "";
 }
 
@@ -503,13 +606,13 @@ async function refreshLowFreq(){
   if(isRunning){ log("任务执行中，禁止重复启动", "warn"); return; }
   isRunning = true;
   setStatus("正在拉取低频宏观…");
-  log("===== 加载【低频宏观】（FRED / 东方财富宏观 / 新浪宏观） =====", "success");
+  log(`===== 加载【低频宏观】（${startY}-${endY}，FRED / 东方财富宏观 / 新浪宏观） =====`, "success");
   const lowList = indicatorList.filter(i=>!i.highFreq);
   for(const item of lowList){
     if(!isRunning) break;
     const cacheItem = cache.get(item.id);
     if(cacheItem && (Date.now() - cacheItem.time) < CACHE_LOW_TTL){
-      updateCard(item, cacheItem.value, cacheItem.history, {chg:cacheItem.chg, srcLabel: cacheItem.srcLabel, time: cacheItem.time});
+      updateCard(item, cacheItem.value, cacheItem.hist, {chg:cacheItem.chg, srcLabel: cacheItem.srcLabel, time: cacheItem.time});
       log(`${item.name} 使用缓存`, "info");
       continue;
     }
@@ -517,8 +620,9 @@ async function refreshLowFreq(){
     if(res){
       const meta = {srcLabel: srcLabelOf(item), time: Date.now(), chg: res.chg};
       cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
-      updateCard(item, res.value, res.history, meta);
-      log(`${item.name}: ${res.value.toFixed(2)}${item.unit||""}`, "success");
+      updateCard(item, res.value, res.hist, meta);
+      const disp = item.invert && res.value !== 0 ? 1/res.value : res.value;
+      log(`${item.name}: ${disp.toFixed(2)}${item.unit||""}`, "success");
     }
     await sleep(150);
   }
@@ -592,13 +696,59 @@ document.getElementById("chipBar").addEventListener("click", (e)=>{
     const d = indicatorData[item.id];
     if(d){
       const cacheItem = cache.get(item.id);
-      updateCard(item, d.value, d.history, {chg: cacheItem&&cacheItem.chg, srcLabel: cacheItem&&cacheItem.srcLabel, time: cacheItem&&cacheItem.time});
+      updateCard(item, d.value, d.hist, {chg: cacheItem&&cacheItem.chg, srcLabel: cacheItem&&cacheItem.srcLabel, time: cacheItem&&cacheItem.time});
     }
   });
 });
 
+// ==================== 周期 / 年份范围控制 ====================
+function redrawAll(){
+  indicatorList.forEach(item=>{
+    const d = indicatorData[item.id];
+    if(d){
+      const cacheItem = cache.get(item.id);
+      updateCard(item, d.value, d.hist, {chg: cacheItem&&cacheItem.chg, srcLabel: cacheItem&&cacheItem.srcLabel, time: cacheItem&&cacheItem.time});
+    }
+  });
+}
+function updateRangeHint(){
+  const el = document.getElementById("rangeHint");
+  if(el) el.textContent = `当前范围：${startY} 年 ~ ${endY} 年 · ${periodName(curPeriod)}`;
+}
+
 // ==================== 初始化 ====================
 window.onload = async function(){
+  // 年份下拉（1990 ~ 当前年）
+  const sySel = document.getElementById("startYear"), eySel = document.getElementById("endYear");
+  for(let y=1990; y<=NOW_YEAR; y++){
+    const o1 = document.createElement('option'); o1.value = y; o1.textContent = y;
+    const o2 = document.createElement('option'); o2.value = y; o2.textContent = y;
+    sySel.appendChild(o1); eySel.appendChild(o2);
+  }
+  sySel.value = String(startY); eySel.value = String(endY);
+  updateRangeHint();
+  // 周期切换：仅本地聚合重绘，不重拉数据
+  document.getElementById("periodGroup").addEventListener("click", (e)=>{
+    const btn = e.target.closest(".period-btn");
+    if(!btn) return;
+    document.querySelectorAll(".period-btn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    curPeriod = btn.dataset.period;
+    log(`切换周期为 ${periodName(curPeriod)}，本地重绘全部图表`, "info");
+    updateRangeHint();
+    redrawAll();
+  });
+  // 应用年份范围：清缓存并重新拉取
+  document.getElementById("applyRange").addEventListener("click", ()=>{
+    const sy = parseInt(sySel.value,10), ey = parseInt(eySel.value,10);
+    if(!sy || !ey || sy > ey){ log("年份范围无效：开始年份需 ≤ 结束年份", "error"); return; }
+    if(sy === startY && ey === endY){ log("年份范围未变化", "warn"); return; }
+    startY = sy; endY = ey;
+    updateRangeHint();
+    cache.clear();
+    log(`应用时间范围 ${startY}-${endY}，清空缓存并重新拉取`, "warn");
+    refreshHighFreq().then(()=>refreshLowFreq());
+  });
   renderCards();
   log("54项指标看板加载完成，开始加载低频宏观数据", "success");
   await refreshLowFreq();
