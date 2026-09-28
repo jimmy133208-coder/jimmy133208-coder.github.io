@@ -113,11 +113,7 @@ body{background:#121417;color:#e9ecef;padding:16px;}
 </div>
 <script>
 // ==================== 配置区 ====================
-// 仓库同步数据源：jsDelivr（国内可达、CORS开放）优先，raw.githubusercontent 兜底
-const SYNC_SOURCES = [
-  "https://cdn.jsdelivr.net/gh/jimmy133208-coder/jimmy133208-coder.github.io@main/data/sync.json",
-  "https://raw.githubusercontent.com/jimmy133208-coder/jimmy133208-coder.github.io/main/data/sync.json"
-];
+const SYNC_URL = "https://raw.githubusercontent.com/jimmy133208-coder/jimmy133208-coder.github.io/main/data/sync.json";
 const AUTO_REFRESH_INTERVAL = 15 * 60 * 1000;
 const CACHE_HIGH_TTL = 10 * 60 * 1000;
 
@@ -129,7 +125,7 @@ const indicatorList = [
   // ========== 高频：美股指数（腾讯实时，历史同步东财） ==========
   {id:"nasdaq", name:"纳斯达克指数",  src:"tx", code:"usIXIC", hist:"sync", syncHist:"ndx", desc:"美国纳斯达克综合指数，覆盖数千只科技与成长股，全球科技股风向标。", warnLow:10000, warnHigh:22000, unit:"点", cat:"us_stock", highFreq:true},
   {id:"sp500",  name:"标普500指数",   src:"tx", code:"usINX",  hist:"sync", syncHist:"spx", desc:"标普500指数，美国500家大型公司市值加权，美股整体表现的核心指标。", warnLow:3000,  warnHigh:6500,  unit:"点", cat:"us_stock", highFreq:true},
-  {id:"djia",   name:"道琼斯指数",    src:"tx", code:"usDJI",  hist:"sync", syncHist:"djia", histFallback:"yahoo", histSymbol:"^DJI", desc:"道琼斯工业指数，30只美国蓝筹股价格加权，历史最悠久的股指之一。", warnLow:25000, warnHigh:60000, unit:"点", cat:"us_stock", highFreq:true},
+  {id:"djia",   name:"道琼斯指数",    src:"tx", code:"usDJI",  hist:"sync", syncHist:"djia", desc:"道琼斯工业指数，30只美国蓝筹股价格加权，历史最悠久的股指之一。", warnLow:25000, warnHigh:60000, unit:"点", cat:"us_stock", highFreq:true},
   {id:"vix",    name:"VIX恐慌指数",   src:"tx", code:"usVIX",  hist:"sync", syncSeries:"VIXCLS", desc:"VIX恐慌指数，由标普500期权隐含波动率计算，衡量市场恐慌与避险情绪。", warnLow:12, warnHigh:35, unit:"点", cat:"us_stock", highFreq:true},
   // ========== 高频：中国及亚太股指（腾讯实时，历史同步东财） ==========
   {id:"sse",    name:"上证指数",     src:"tx", code:"sh000001", hist:"sync", syncHist:"sh000001", histFallback:"tx", histCode:"sh000001", desc:"上证指数，上海证券交易所全部A股综合指数，反映沪市整体表现。", warnLow:2400, warnHigh:3800, unit:"点", cat:"global_index", highFreq:true},
@@ -223,17 +219,12 @@ function log(msg, type="info"){
 }
 
 // ==================== 数据获取层 ====================
-// 仓库同步数据（jsDelivr 优先 + raw 兜底，均 CORS 开放）
+// 仓库同步数据（GitHub raw，CORS=*，无 Referer 限制）
 async function fetchSyncData(){
-  for(const u of SYNC_SOURCES){
-    try{
-      const res = await fetch(u, {signal: AbortSignal.timeout(30000)});
-      if(!res.ok) throw new Error("sync http " + res.status);
-      const d = await res.json();
-      if(d && d.updated) return d;
-    }catch(e){}
-  }
-  throw new Error("sync.json 获取失败（jsDelivr 与 raw 均不可用）");
+  const res = await fetch(SYNC_URL, {signal: AbortSignal.timeout(30000)});
+  if(!res.ok) throw new Error("sync http " + res.status);
+  SYNC_DATA = await res.json();
+  return SYNC_DATA;
 }
 // 腾讯批量行情（直连，CORS=*，无 Referer 限制）
 async function fetchTXBatch(codes){
@@ -300,25 +291,6 @@ function fetchSinaGlobalHist(symbol){
     const values = arr.map(o => parseFloat(o.close));
     return {dates, values};
   });
-}
-// 雅虎财经日K（CORS 开放，兜底美股指数历史；range=8y 覆盖 2020 至今）
-async function fetchYahooHist(symbol){
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=8y&interval=1d`;
-  const res = await fetch(url, {signal: AbortSignal.timeout(20000)});
-  const json = await res.json();
-  const r = json.chart && json.chart.result && json.chart.result[0];
-  if(!r) return null;
-  const ts = r.timestamp || [];
-  const closes = (r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || [];
-  const dates = [], values = [];
-  for(let i=0;i<ts.length;i++){
-    const c = closes[i];
-    if(c !== null && c !== undefined && isFinite(c)){
-      const d = new Date(ts[i]*1000).toISOString().slice(0,10);
-      dates.push(d); values.push(c);
-    }
-  }
-  return dates.length ? {dates, values} : null;
 }
 // ============ FRED 派生（yoy/mom，保留日期） ============
 function deriveFRED(item, dates, values){
@@ -504,7 +476,6 @@ async function fetchOne(item){
             hist = syncHistSeries(item);
             if(!hist && item.histFallback === "tx") hist = await fetchTXHistory(item.histCode, startY, endY);
             else if(!hist && item.histFallback === "sina") hist = await fetchSinaGlobalHist(item.histSymbol);
-            else if(!hist && item.histFallback === "yahoo") hist = await fetchYahooHist(item.histSymbol);
           }
           else if(item.hist === "tx") hist = await fetchTXHistory(item.histCode, startY, endY);
           else if(item.hist === "sina") hist = await fetchSinaGlobalHist(item.histSymbol);
