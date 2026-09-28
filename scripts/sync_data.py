@@ -57,6 +57,7 @@ def pull_fred():
                     if not (v != v):  # not NaN
                         dates.append(o["date"]); values.append(v)
             if dates:
+                # 最多保留 1300 点
                 if len(dates) > 1300:
                     dates = dates[-1300:]; values = values[-1300:]
                 out[sid] = {"dates": dates, "values": values}
@@ -65,7 +66,7 @@ def pull_fred():
                 print("  FRED", sid, "EMPTY")
         except Exception as e:
             print("  FRED", sid, "ERR", e)
-        time.sleep(0.6)
+        time.sleep(0.6)  # FRED 限流 120/min
     return out
 
 # ---------- 东方财富数据中心 ----------
@@ -124,10 +125,10 @@ def pull_emdc():
 # ---------- 外汇/指数（新浪行情，Python 伪造 Referer） ----------
 def pull_fx():
     codes = {
-        "DINIW": "dxy",
-        "fx_susdcny": "usdcny",
-        "fx_seurusd": "eurusd",
-        "fx_susdcnh": "usdcnh"
+        "DINIW": "dxy",        # 美元指数
+        "fx_susdcny": "usdcny", # 美元/人民币(在岸)
+        "fx_seurusd": "eurusd", # 欧元/美元
+        "fx_susdcnh": "usdcnh"  # 美元/离岸人民币
     }
     out = {}
     list_str = ",".join(codes.keys())
@@ -157,6 +158,66 @@ def pull_fx():
     return out
 
 # ---------- 历史K线（东财美股/A股/港股 + 新浪外汇 + 新浪全球期货） ----------
+# 备源：美股失败切雅虎(Yahoo Finance)，A股/港股失败切腾讯K线（海外Actions环境东财中国链路易被风控）
+def pull_yahoo_hist(key, sym):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}?range=8y&interval=1d"
+    d = fetch_json(url)
+    r = (d.get("chart") or {}).get("result") or []
+    if not r:
+        return None
+    ts = r[0].get("timestamp") or []
+    quotes = ((r[0].get("indicators") or {}).get("quote") or [{}])
+    closes = (quotes[0].get("close") if quotes else None) or []
+    dates, values = [], []
+    for i in range(len(ts)):
+        c = closes[i] if i < len(closes) else None
+        if c is None:
+            continue
+        try:
+            v = float(c)
+        except (TypeError, ValueError):
+            continue
+        if v == v:
+            dstr = datetime.datetime.utcfromtimestamp(int(ts[i])).strftime("%Y-%m-%d")
+            dates.append(dstr); values.append(v)
+    if not dates:
+        return None
+    if len(dates) > 1300:
+        dates = dates[-1300:]; values = values[-1300:]
+    return {"dates": dates, "values": values}
+
+def pull_tx_hist(key, code):
+    param = f"{code},day,2020-01-01,2026-12-31,3200,qfq"
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={param}"
+    d = fetch_json(url)
+    data = d.get("data") or {}
+    node = data.get(code)
+    if not node and data:
+        node = data[list(data.keys())[0]]
+    if not node:
+        return None
+    arr = None
+    for k in node:
+        if isinstance(node[k], list) and node[k]:
+            arr = node[k]; break
+    if not arr:
+        return None
+    dates, values = [], []
+    for row in arr:
+        try:
+            dates.append(row[0]); values.append(float(row[2]))
+        except (IndexError, TypeError, ValueError):
+            continue
+    if not dates:
+        return None
+    if len(dates) > 1300:
+        dates = dates[-1300:]; values = values[-1300:]
+    return {"dates": dates, "values": values}
+
+YAHOO_MAP = {"ndx": "%5EIXIC", "spx": "%5EGSPC", "djia": "%5EDJI"}
+TX_MAP = {"sh000001": "sh000001", "sh000905": "sh000905", "sh000300": "sh000300",
+          "sz399006": "sz399006", "hsi": "hkHSI"}
+
 def pull_hist():
     out = {}
     em_secids = {
@@ -200,6 +261,7 @@ def pull_hist():
                     continue
                 print("  HIST-EM", key, "ERR", str(e)[:80])
         time.sleep(2.5)
+    # 第二轮补拉缺失的东财历史（风控偶发打掉单个key）
     for key in [k for k in em_secids if k not in out]:
         secid = em_secids[key]
         for attempt in range(3):
@@ -234,6 +296,21 @@ def pull_hist():
                     continue
                 print("  HIST-EM-RETRY", key, "ERR", str(e)[:80])
         time.sleep(2)
+    # 第三轮：东财仍缺失的键走备源（美股→雅虎，A股/港股→腾讯K线）
+    for key in [k for k in em_secids if k not in out]:
+        h = None
+        try:
+            if key in YAHOO_MAP:
+                h = pull_yahoo_hist(key, YAHOO_MAP[key])
+                print("  HIST-YH", key, "OK" if h else "EMPTY", h and len(h["dates"]))
+            elif key in TX_MAP:
+                h = pull_tx_hist(key, TX_MAP[key])
+                print("  HIST-TX", key, "OK" if h else "EMPTY", h and len(h["dates"]))
+        except Exception as e:
+            print("  HIST-FALLBACK", key, "ERR", str(e)[:80])
+        if h and h["dates"]:
+            out[key] = h
+        time.sleep(1)
     fx_syms = {"diniw": "DINIW", "usdcny": "USDCNY", "usdcnh": "USDCNH", "eurusd": "EURUSD"}
     for key, sym in fx_syms.items():
         try:
