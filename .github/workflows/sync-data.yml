@@ -1,0 +1,28 @@
+name: sync-macro-data
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  push:
+    branches: [main]
+    paths: ['scripts/**', 'data/**', '.github/workflows/**']
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run data sync
+        run: python3 scripts/sync_data.py
+      - name: Commit and push
+        run: |
+          git config user.name "doubao-sync-bot"
+          git config user.email "doubao-sync-bot@users.noreply.github.com"
+          git add -f data/sync.json
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "auto: sync macro data $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
