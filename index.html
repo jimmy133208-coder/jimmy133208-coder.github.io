@@ -381,9 +381,10 @@ function updateCard(item, value, hist, meta={}){
   if(item.invert && value !== 0) display = 1/value;
   valEl.textContent = isFinite(display) ? display.toFixed(2) : "--";
   const chgEl = document.getElementById(`chg-${item.id}`);
-  if(meta.chg !== undefined && isFinite(meta.chg)){
-    chgEl.textContent = (meta.chg>0?"+":"") + meta.chg.toFixed(2) + "%";
-    chgEl.className = "card-change " + (meta.chg>0.05?"up":(meta.chg<-0.05?"down":"flat"));
+  const chg = meta.chg;
+  if(chg !== undefined && chg !== null && isFinite(chg)){
+    chgEl.textContent = (chg>0?"+":"") + chg.toFixed(2) + "%";
+    chgEl.className = "card-change " + (chg>0.05?"up":(chg<-0.05?"down":"flat"));
   }
   cardEl.classList.remove("red");
   const warnSpan = cardEl.querySelector(".card-warn");
@@ -516,27 +517,30 @@ async function refreshHighFreq(){
   if(isRunning){ log("任务执行中，禁止重复启动", "warn"); return; }
   isRunning = true;
   setStatus("正在拉取高频行情…");
-  log(`===== 刷新【高频行情】（${startY}-${endY}，${periodName(curPeriod)}） =====`, "success");
-  const highList = indicatorList.filter(i=>i.highFreq);
-  const batchSize = 6;
-  for(let i=0;i<highList.length;i+=batchSize){
-    if(!isRunning) break;
-    const batch = highList.slice(i, i+batchSize);
-    const results = await Promise.all(batch.map(item => fetchOne(item)));
-    batch.forEach((item, j) => {
-      const res = results[j];
-      if(res){
-        cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
-        updateCard(item, res.value, res.hist, {chg: res.chg, srcLabel: srcLabelOf(item), time: Date.now()});
-        const disp = item.invert && res.value !== 0 ? 1/res.value : res.value;
-        log(`${item.name}: ${disp.toFixed(2)}${item.unit||""}`, "success");
-      }
-    });
-    await sleep(300);
+  try{
+    log(`===== 刷新【高频行情】（${startY}-${endY}，${periodName(curPeriod)}） =====`, "success");
+    const highList = indicatorList.filter(i=>i.highFreq);
+    const batchSize = 6;
+    for(let i=0;i<highList.length;i+=batchSize){
+      if(!isRunning) break;
+      const batch = highList.slice(i, i+batchSize);
+      const results = await Promise.all(batch.map(item => fetchOne(item)));
+      batch.forEach((item, j) => {
+        const res = results[j];
+        if(res){
+          cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
+          updateCard(item, res.value, res.hist, {chg: res.chg, srcLabel: srcLabelOf(item), time: Date.now()});
+          const disp = item.invert && res.value !== 0 ? 1/res.value : res.value;
+          log(`${item.name}: ${disp.toFixed(2)}${item.unit||""}`, "success");
+        }
+      });
+      await sleep(300);
+    }
+    log("高频行情刷新完成", "success");
+  }finally{
+    isRunning = false;
+    setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
   }
-  log("高频行情刷新完成", "success");
-  isRunning = false;
-  setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
 }
 
 // 宏观数据刷新（全部来自仓库同步数据，本地即时渲染）
@@ -544,35 +548,38 @@ async function refreshLowFreq(){
   if(isRunning){ log("任务执行中，禁止重复启动", "warn"); return; }
   isRunning = true;
   setStatus("正在同步宏观数据…");
-  log(`===== 重新加载【宏观数据】（${startY}-${endY}） =====`, "success");
   try{
-    await fetchSyncData();
-    log("仓库同步数据获取成功", "success");
-  }catch(e){
-    log("仓库同步数据获取失败: " + e.message, "error");
-    if(SYNC_DATA) log("使用上一次已加载数据", "warn");
-  }
-  const lowList = indicatorList.filter(i=>!i.highFreq);
-  for(const item of lowList){
-    if(!isRunning) break;
-    const cacheItem = cache.get(item.id);
-    if(cacheItem && (Date.now() - cacheItem.time) < 10 * 60 * 1000){
-      updateCard(item, cacheItem.value, cacheItem.hist, {chg:cacheItem.chg, srcLabel: cacheItem.srcLabel, time: cacheItem.time});
-      continue;
+    log(`===== 重新加载【宏观数据】（${startY}-${endY}） =====`, "success");
+    try{
+      await fetchSyncData();
+      log("仓库同步数据获取成功", "success");
+    }catch(e){
+      log("仓库同步数据获取失败: " + e.message, "error");
+      if(SYNC_DATA) log("使用上一次已加载数据", "warn");
     }
-    const res = await fetchOne(item);
-    if(res){
-      const meta = {srcLabel: srcLabelOf(item), time: srcTimeOf(item), chg: res.chg};
-      cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
-      updateCard(item, res.value, res.hist, meta);
-      const disp = item.invert && res.value !== 0 ? 1/res.value : res.value;
-      log(`${item.name}: ${disp.toFixed(2)}${item.unit||""}`, "success");
+    const lowList = indicatorList.filter(i=>!i.highFreq);
+    for(const item of lowList){
+      if(!isRunning) break;
+      const cacheItem = cache.get(item.id);
+      if(cacheItem && (Date.now() - cacheItem.time) < 10 * 60 * 1000){
+        updateCard(item, cacheItem.value, cacheItem.hist, {chg:cacheItem.chg, srcLabel: cacheItem.srcLabel, time: cacheItem.time});
+        continue;
+      }
+      const res = await fetchOne(item);
+      if(res){
+        const meta = {srcLabel: srcLabelOf(item), time: srcTimeOf(item), chg: res.chg};
+        cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
+        updateCard(item, res.value, res.hist, meta);
+        const disp = item.invert && res.value !== 0 ? 1/res.value : res.value;
+        log(`${item.name}: ${disp.toFixed(2)}${item.unit||""}`, "success");
+      }
+      await sleep(60);
     }
-    await sleep(60);
+    log("宏观数据加载完成", "success");
+  }finally{
+    isRunning = false;
+    setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
   }
-  log("宏观数据加载完成", "success");
-  isRunning = false;
-  setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
 }
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
