@@ -419,6 +419,8 @@ function drawChart(item, agg){
   const labels = agg.dates.map(fmtAxisDate);
   const data = agg.values.map((v,i)=>[labels[i], v]);
   const up = agg.values[agg.values.length-1] >= agg.values[0];
+  const cw = chartDom.clientWidth || 300;
+  const slim = cw < 230;
   chartInstances[item.id].setOption({
     animation:false,
     tooltip:{trigger:'axis', formatter: params => {
@@ -426,9 +428,9 @@ function drawChart(item, agg){
       const rawDate = agg.dates[p.dataIndex];
       return (rawDate||"") + "<br/>" + p.data[1].toFixed(2);
     }},
-    grid:{top:6,right:4,bottom:18,left:38},
+    grid:{top:6,right:4,bottom: slim?14:18,left: slim?26:38},
     xAxis:{type:'category', data: labels, axisLabel:{fontSize:8, color:'#64748b', interval: Math.max(0, Math.ceil(labels.length/8)-1)}, axisLine:{lineStyle:{color:'#333'}}},
-    yAxis:{type:'value', scale:true, axisLabel:{fontSize:9, color:'#64748b'}, splitLine:{lineStyle:{color:'#262b31'}}},
+    yAxis:{type:'value', scale:true, axisLabel:{fontSize: slim?7:9, color:'#64748b'}, splitLine:{lineStyle:{color:'#262b31'}}},
     series:[{type:'line', data, smooth:true, symbol:'none',
       lineStyle:{width:1.4, color: up ? '#f87171' : '#34d399'},
       areaStyle:{color: up ? 'rgba(248,113,113,.12)' : 'rgba(52,211,153,.12)'}}]
