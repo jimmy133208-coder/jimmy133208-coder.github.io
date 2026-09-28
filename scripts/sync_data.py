@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """同步中美宏观数据到 data/sync.json（本地与 GitHub Actions 通用）
 FRED(圣路易斯联储) 22 系列 + 东方财富数据中心 12 报表 + 外汇 4 项
-+ 历史K线（FRED美股指数 + 东财A股/港股 + 新浪外汇 + 新浪全球期货，2020 起）
++ 历史K线（FRED美股指数 + 腾讯A股/港股 + 新浪外汇 + 新浪全球期货，2020 起）
 """
 import urllib.request, urllib.parse, json, time, sys, os, datetime, re
 
@@ -157,7 +157,7 @@ def pull_fx():
         print("  FX ERR", e)
     return out
 
-# ---------- 历史K线（FRED美股指数 + 东财A股/港股 + 新浪外汇 + 新浪全球期货） ----------
+# ---------- 历史K线（FRED美股指数 + 腾讯A股/港股 + 新浪外汇 + 新浪全球期货） ----------
 def pull_hist():
     out = {}
     # 美股指数历史用 FRED 官方指数（稳定，无需对抗东财风控）
@@ -184,123 +184,100 @@ def pull_hist():
         except Exception as e:
             print("  HIST-FRED", key, "ERR", e)
         time.sleep(0.6)
-    em_secids = {
-        "sh000001": "1.000001", "sh000905": "1.000905", "sh000300": "1.000300",
-        "sz399006": "0.399006", "hsi": "100.HSI",
-    }
-    em_hosts = ["push2his.eastmoney.com", "19.push2his.eastmoney.com", "21.push2his.eastmoney.com",
-                "5.push2his.eastmoney.com", "29.push2his.eastmoney.com"]
-    _em_last = [0.0]
-    def _em_wait():
-        wait = 7.0 - (time.time() - _em_last[0])
-        if wait > 0:
-            time.sleep(wait)
-        _em_last[0] = time.time()
-    def _pull_em(out, key, secid, attempts, sleeps, label):
-        for attempt in range(attempts):
-            host = em_hosts[attempt % len(em_hosts)] if secid.startswith("100.") else "push2his.eastmoney.com"
-            url = (f"https://{host}/api/qt/stock/kline/get?secid={secid}"
-                   f"&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
-                   f"&klt=101&fqt=1&beg=20200101&end=20261231")
-            try:
-                _em_wait()
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36',
-                    'Referer': 'https://quote.eastmoney.com/'
-                })
-                with urllib.request.urlopen(req, timeout=25) as r:
-                    d = json.loads(r.read().decode('utf-8', 'replace'))
-                klines = (d.get("data") or {}).get("klines") or []
-                dates, values = [], []
-                for k in klines:
-                    p = k.split(",")
-                    if len(p) >= 3:
+    # A股/港股指数历史用腾讯K线（稳定无风控，1300点/2021起）
+    tx_syms = {"sh000001": "sh000001", "sh000905": "sh000905", "sh000300": "sh000300",
+               "sz399006": "sz399006", "hsi": "hkHSI"}
+    for key, sym in tx_syms.items():
+        try:
+            url = f"https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param={sym},day,,,1300"
+            d = fetch_json(url)
+            node = d.get("data", {}).get(sym, {})
+            arr = node.get("day") if isinstance(node.get("day"), list) else None
+            dates, values = [], []
+            if arr:
+                for row in arr:
+                    if len(row) >= 3:
                         try:
-                            dates.append(p[0]); values.append(float(p[2]))
+                            dates.append(row[0]); values.append(float(row[2]))
+                        except (TypeError, ValueError):
+                            continue
+            if dates:
+                out[key] = {"dates": dates, "values": values}
+                print("  HIST-TX", key, len(dates), dates[0], "~", dates[-1], values[-1])
+            else:
+                print("  HIST-TX", key, "EMPTY")
+        except Exception as e:
+            print("  HIST-TX", key, "ERR", str(e)[:80])
+    fx_syms = {"diniw": "DINIW", "usdcny": "USDCNY", "usdcnh": "USDCNH", "eurusd": "EURUSD"}
+    for key, sym in fx_syms.items():
+        ok = False
+        for fx_attempt in range(3):
+            try:
+                cb = "_h" + str(int(time.time() * 1000))
+                url = (f"https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20{cb}="
+                       f"/NewForexService.getDayKLine?symbol={sym}&_={int(time.time() * 1000)}")
+                t = fetch(url)
+                m = re.search(r'=\s*\((.*)\)\s*;?\s*$', t, re.S)
+                if not m:
+                    print("  HIST-FX", key, "BAD", t[:100]); break
+                dates, values = [], []
+                for row in m.group(1).split("|"):
+                    p = row.split(",")
+                    if len(p) >= 5 and p[0].strip():
+                        try:
+                            v = float(p[4])
                         except ValueError:
+                            continue
+                        if p[0].strip() >= "2020-01-01":
+                            dates.append(p[0].strip()); values.append(v)
+                if dates:
+                    if len(dates) > 1300:
+                        dates = dates[-1300:]; values = values[-1300:]
+                    out[key] = {"dates": dates, "values": values}
+                    print("  HIST-FX", key, len(dates), dates[0], "~", dates[-1], values[-1])
+                    ok = True
+                else:
+                    print("  HIST-FX", key, "EMPTY")
+                break
+            except Exception as e:
+                if fx_attempt < 2:
+                    time.sleep(5)
+                    continue
+                print("  HIST-FX", key, "ERR", e)
+        time.sleep(0.4)
+    fut_syms = {"gc": "GC", "si": "SI", "oil": "OIL", "cl": "CL", "hg": "HG", "c": "C", "s": "S"}
+    for key, sym in fut_syms.items():
+        for fut_attempt in range(3):
+            try:
+                cb = "_f" + str(int(time.time() * 1000))
+                url = (f"https://stock.finance.sina.com.cn/futures/api/jsonp.php/var%20{cb}="
+                       f"/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol={sym}")
+                t = fetch(url)
+                m = re.search(r'=\s*\(?(\[.*\])\s*\)?\s*;?\s*$', t, re.S)
+                if not m:
+                    print("  HIST-FUT", key, "BAD", t[:100]); break
+                arr = json.loads(m.group(1))
+                dates, values = [], []
+                for o in arr:
+                    d = str(o.get("date", ""))
+                    if d >= "2020-01-01":
+                        try:
+                            dates.append(d); values.append(float(o.get("close", 0)))
+                        except (TypeError, ValueError):
                             continue
                 if dates:
                     if len(dates) > 1300:
                         dates = dates[-1300:]; values = values[-1300:]
                     out[key] = {"dates": dates, "values": values}
-                    print("  " + label, key, len(dates), dates[0], "~", dates[-1], values[-1])
-                    return True
-                print("  " + label, key, "EMPTY")
-                return False
+                    print("  HIST-FUT", key, len(dates), dates[0], "~", dates[-1], values[-1])
+                else:
+                    print("  HIST-FUT", key, "EMPTY")
+                break
             except Exception as e:
-                if attempt < attempts - 1:
-                    time.sleep(sleeps[min(attempt, len(sleeps) - 1)])
+                if fut_attempt < 2:
+                    time.sleep(5)
                     continue
-                print("  " + label, key, "ERR", str(e)[:80])
-        return False
-    for i, (key, secid) in enumerate(em_secids.items()):
-        _pull_em(out, key, secid, 6, [7, 10, 15, 20, 25], "HIST-EM")
-    # 多轮补拉缺失的东财历史（风控偶发打掉单个key，轮间冷却30s）
-    for rnd in range(4):
-        missing = [k for k in em_secids if k not in out]
-        if not missing:
-            break
-        time.sleep(30)
-        for key in missing:
-            _pull_em(out, key, em_secids[key], 3, [15, 20], "HIST-EM-RETRY")
-    fx_syms = {"diniw": "DINIW", "usdcny": "USDCNY", "usdcnh": "USDCNH", "eurusd": "EURUSD"}
-    for key, sym in fx_syms.items():
-        try:
-            cb = "_h" + str(int(time.time() * 1000))
-            url = (f"https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20{cb}="
-                   f"/NewForexService.getDayKLine?symbol={sym}&_={int(time.time() * 1000)}")
-            t = fetch(url)
-            m = re.search(r'=\s*\((.*)\)\s*;?\s*$', t, re.S)
-            if not m:
-                print("  HIST-FX", key, "BAD", t[:100]); continue
-            dates, values = [], []
-            for row in m.group(1).split("|"):
-                p = row.split(",")
-                if len(p) >= 5 and p[0].strip():
-                    try:
-                        v = float(p[4])
-                    except ValueError:
-                        continue
-                    if p[0].strip() >= "2020-01-01":
-                        dates.append(p[0].strip()); values.append(v)
-            if dates:
-                if len(dates) > 1300:
-                    dates = dates[-1300:]; values = values[-1300:]
-                out[key] = {"dates": dates, "values": values}
-                print("  HIST-FX", key, len(dates), dates[0], "~", dates[-1], values[-1])
-            else:
-                print("  HIST-FX", key, "EMPTY")
-        except Exception as e:
-            print("  HIST-FX", key, "ERR", e)
-        time.sleep(0.4)
-    fut_syms = {"gc": "GC", "si": "SI", "oil": "OIL", "cl": "CL", "hg": "HG", "c": "C", "s": "S"}
-    for key, sym in fut_syms.items():
-        try:
-            cb = "_f" + str(int(time.time() * 1000))
-            url = (f"https://stock.finance.sina.com.cn/futures/api/jsonp.php/var%20{cb}="
-                   f"/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol={sym}")
-            t = fetch(url)
-            m = re.search(r'=\s*\(?(\[.*\])\s*\)?\s*;?\s*$', t, re.S)
-            if not m:
-                print("  HIST-FUT", key, "BAD", t[:100]); continue
-            arr = json.loads(m.group(1))
-            dates, values = [], []
-            for o in arr:
-                d = str(o.get("date", ""))
-                if d >= "2020-01-01":
-                    try:
-                        dates.append(d); values.append(float(o.get("close", 0)))
-                    except (TypeError, ValueError):
-                        continue
-            if dates:
-                if len(dates) > 1300:
-                    dates = dates[-1300:]; values = values[-1300:]
-                out[key] = {"dates": dates, "values": values}
-                print("  HIST-FUT", key, len(dates), dates[0], "~", dates[-1], values[-1])
-            else:
-                print("  HIST-FUT", key, "EMPTY")
-        except Exception as e:
-            print("  HIST-FUT", key, "ERR", e)
+                print("  HIST-FUT", key, "ERR", e)
         time.sleep(0.4)
     return out
 
