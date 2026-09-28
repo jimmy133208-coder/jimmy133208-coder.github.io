@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """同步中美宏观数据到 data/sync.json（本地与 GitHub Actions 通用）
 FRED(圣路易斯联储) 22 系列 + 东方财富数据中心 12 报表 + 外汇 4 项
++ 历史K线（东财美股/A股/港股 + 新浪外汇 + 新浪全球期货，2020 起）
 """
-import urllib.request, urllib.parse, json, time, sys, os, datetime
+import urllib.request, urllib.parse, json, time, sys, os, datetime, re
 
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) doubao-sync/1.0'}
 FRED_KEY = "3bfcf47458e7e97a5a4ad69174d28fe0"
@@ -27,7 +28,7 @@ FRED_SERIES = {
   "CPILFESL": {"name":"美国核心CPI(指数)", "unit":"1982-84=100"},
   "PPIFIS": {"name":"美国PPI(指数)", "unit":"1982=100"},
   "UNRATE": {"name":"美国失业率", "unit":"%"},
-  "PAYEMS": {"name":"美国非农就业(千人)", "unit":"千人"},
+  "PAYEMS": {"name":"美国非农就业(万人)", "unit":"千人"},
   "HOUST": {"name":"美国新屋开工", "unit":"千套"},
   "RSAFS": {"name":"美国零售销售(百万美元)", "unit":"百万美元"},
   "TCU": {"name":"美国产能利用率", "unit":"%"},
@@ -53,7 +54,7 @@ def pull_fred():
             for o in obs:
                 if o.get("value") not in (".", "", None):
                     v = float(o["value"])
-                    if not (v != v):
+                    if not (v != v):  # not NaN
                         dates.append(o["date"]); values.append(v)
             if dates:
                 if len(dates) > 1300:
@@ -155,6 +156,145 @@ def pull_fx():
         print("  FX ERR", e)
     return out
 
+# ---------- 历史K线（东财美股/A股/港股 + 新浪外汇 + 新浪全球期货） ----------
+def pull_hist():
+    out = {}
+    em_secids = {
+        "ndx": "100.NDX", "spx": "100.SPX", "djia": "100.DJIA",
+        "sh000001": "1.000001", "sh000905": "1.000905", "sh000300": "1.000300",
+        "sz399006": "0.399006", "hsi": "100.HSI",
+    }
+    for i, (key, secid) in enumerate(em_secids.items()):
+        host = "push2his.eastmoney.com"
+        for attempt in range(4):
+            try:
+                url = (f"https://{host}/api/qt/stock/kline/get?secid={secid}"
+                       f"&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+                       f"&klt=101&fqt=1&beg=20200101&end=20261231")
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36',
+                    'Referer': 'https://quote.eastmoney.com/'
+                })
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    d = json.loads(r.read().decode('utf-8', 'replace'))
+                klines = (d.get("data") or {}).get("klines") or []
+                dates, values = [], []
+                for k in klines:
+                    p = k.split(",")
+                    if len(p) >= 3:
+                        try:
+                            dates.append(p[0]); values.append(float(p[2]))
+                        except ValueError:
+                            continue
+                if dates:
+                    if len(dates) > 1300:
+                        dates = dates[-1300:]; values = values[-1300:]
+                    out[key] = {"dates": dates, "values": values}
+                    print("  HIST-EM", key, len(dates), dates[0], "~", dates[-1], values[-1])
+                else:
+                    print("  HIST-EM", key, "EMPTY")
+                break
+            except Exception as e:
+                if attempt < 3:
+                    time.sleep([3, 6, 10][attempt])
+                    continue
+                print("  HIST-EM", key, "ERR", str(e)[:80])
+        time.sleep(2.5)
+    for key in [k for k in em_secids if k not in out]:
+        secid = em_secids[key]
+        for attempt in range(3):
+            try:
+                url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
+                       f"&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+                       f"&klt=101&fqt=1&beg=20200101&end=20261231")
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36',
+                    'Referer': 'https://quote.eastmoney.com/'
+                })
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    d = json.loads(r.read().decode('utf-8', 'replace'))
+                klines = (d.get("data") or {}).get("klines") or []
+                dates, values = [], []
+                for k in klines:
+                    p = k.split(",")
+                    if len(p) >= 3:
+                        try:
+                            dates.append(p[0]); values.append(float(p[2]))
+                        except ValueError:
+                            continue
+                if dates:
+                    if len(dates) > 1300:
+                        dates = dates[-1300:]; values = values[-1300:]
+                    out[key] = {"dates": dates, "values": values}
+                    print("  HIST-EM-RETRY", key, len(dates), dates[0], "~", dates[-1], values[-1])
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(8)
+                    continue
+                print("  HIST-EM-RETRY", key, "ERR", str(e)[:80])
+        time.sleep(2)
+    fx_syms = {"diniw": "DINIW", "usdcny": "USDCNY", "usdcnh": "USDCNH", "eurusd": "EURUSD"}
+    for key, sym in fx_syms.items():
+        try:
+            cb = "_h" + str(int(time.time() * 1000))
+            url = (f"https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20{cb}="
+                   f"/NewForexService.getDayKLine?symbol={sym}&_={int(time.time() * 1000)}")
+            t = fetch(url)
+            m = re.search(r'=\s*\((.*)\)\s*;?\s*$', t, re.S)
+            if not m:
+                print("  HIST-FX", key, "BAD", t[:100]); continue
+            dates, values = [], []
+            for row in m.group(1).split("|"):
+                p = row.split(",")
+                if len(p) >= 5 and p[0].strip():
+                    try:
+                        v = float(p[4])
+                    except ValueError:
+                        continue
+                    if p[0].strip() >= "2020-01-01":
+                        dates.append(p[0].strip()); values.append(v)
+            if dates:
+                if len(dates) > 1300:
+                    dates = dates[-1300:]; values = values[-1300:]
+                out[key] = {"dates": dates, "values": values}
+                print("  HIST-FX", key, len(dates), dates[0], "~", dates[-1], values[-1])
+            else:
+                print("  HIST-FX", key, "EMPTY")
+        except Exception as e:
+            print("  HIST-FX", key, "ERR", e)
+        time.sleep(0.4)
+    fut_syms = {"gc": "GC", "si": "SI", "oil": "OIL", "cl": "CL", "hg": "HG", "c": "C", "s": "S"}
+    for key, sym in fut_syms.items():
+        try:
+            cb = "_f" + str(int(time.time() * 1000))
+            url = (f"https://stock.finance.sina.com.cn/futures/api/jsonp.php/var%20{cb}="
+                   f"/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol={sym}")
+            t = fetch(url)
+            m = re.search(r'=\s*\(?(\[.*\])\s*\)?\s*;?\s*$', t, re.S)
+            if not m:
+                print("  HIST-FUT", key, "BAD", t[:100]); continue
+            arr = json.loads(m.group(1))
+            dates, values = [], []
+            for o in arr:
+                d = str(o.get("date", ""))
+                if d >= "2020-01-01":
+                    try:
+                        dates.append(d); values.append(float(o.get("close", 0)))
+                    except (TypeError, ValueError):
+                        continue
+            if dates:
+                if len(dates) > 1300:
+                    dates = dates[-1300:]; values = values[-1300:]
+                out[key] = {"dates": dates, "values": values}
+                print("  HIST-FUT", key, len(dates), dates[0], "~", dates[-1], values[-1])
+            else:
+                print("  HIST-FUT", key, "EMPTY")
+        except Exception as e:
+            print("  HIST-FUT", key, "ERR", e)
+        time.sleep(0.4)
+    return out
+
 def main():
     print("== pull FRED ==")
     fred = pull_fred()
@@ -162,9 +302,11 @@ def main():
     emdc = pull_emdc()
     print("== pull FX ==")
     fx = pull_fx()
+    print("== pull HIST ==")
+    hist = pull_hist()
     payload = {
         "updated": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "fred": fred, "emdc": emdc, "fx": fx
+        "fred": fred, "emdc": emdc, "fx": fx, "hist": hist
     }
     if sys.platform == "win32":
         out_path = r"D:\豆包工作文件\宏观金融指标看板\data\sync.json"
@@ -174,7 +316,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     print("WROTE", out_path, os.path.getsize(out_path), "bytes")
-    print("FRED series:", len(fred), "| EMDC:", len(emdc), "| FX:", len(fx))
+    print("FRED series:", len(fred), "| EMDC:", len(emdc), "| FX:", len(fx), "| HIST:", len(hist))
 
 if __name__ == "__main__":
     main()
