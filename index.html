@@ -113,7 +113,11 @@ body{background:#121417;color:#e9ecef;padding:16px;}
 </div>
 <script>
 // ==================== 配置区 ====================
-const SYNC_URL = "https://raw.githubusercontent.com/jimmy133208-coder/jimmy133208-coder.github.io/main/data/sync.json";
+// 仓库同步数据源：jsDelivr（国内可达、CORS开放）优先，raw.githubusercontent 兜底
+const SYNC_SOURCES = [
+  "https://cdn.jsdelivr.net/gh/jimmy133208-coder/jimmy133208-coder.github.io@main/data/sync.json",
+  "https://raw.githubusercontent.com/jimmy133208-coder/jimmy133208-coder.github.io/main/data/sync.json"
+];
 const AUTO_REFRESH_INTERVAL = 15 * 60 * 1000;
 const CACHE_HIGH_TTL = 10 * 60 * 1000;
 
@@ -219,12 +223,17 @@ function log(msg, type="info"){
 }
 
 // ==================== 数据获取层 ====================
-// 仓库同步数据（GitHub raw，CORS=*，无 Referer 限制）
+// 仓库同步数据（jsDelivr 优先 + raw 兜底，均 CORS 开放）
 async function fetchSyncData(){
-  const res = await fetch(SYNC_URL, {signal: AbortSignal.timeout(30000)});
-  if(!res.ok) throw new Error("sync http " + res.status);
-  SYNC_DATA = await res.json();
-  return SYNC_DATA;
+  for(const u of SYNC_SOURCES){
+    try{
+      const res = await fetch(u, {signal: AbortSignal.timeout(30000)});
+      if(!res.ok) throw new Error("sync http " + res.status);
+      const d = await res.json();
+      if(d && d.updated) return d;
+    }catch(e){}
+  }
+  throw new Error("sync.json 获取失败（jsDelivr 与 raw 均不可用）");
 }
 // 腾讯批量行情（直连，CORS=*，无 Referer 限制）
 async function fetchTXBatch(codes){
