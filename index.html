@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中美核心54项宏观金融指标实时看板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23121417'/%3E%3Cpath d='M5 22 L11 12 L16 19 L21 8 L27 22' stroke='%233b82f6' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='21' cy='8' r='1.8' fill='%23facc15'/%3E%3C/svg%3E">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+body{background:#121417;color:#e9ecef;padding:16px;}
+.container{max-width:1680px;margin:0 auto;}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px;}
+.header h2{font-size:20px;font-weight:700;}
+.header .sub{font-size:12px;color:#94a3b8;margin-top:4px;font-weight:400;}
+.btn{padding:7px 13px;border-radius:6px;border:none;cursor:pointer;font-weight:600;font-size:13px;color:#fff;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.btn-refresh{background:#2563eb;}
+.btn-refresh-all-low{background:#9333ea;}
+.btn-auto{background:#d97706;}
+.btn-auto.on{background:#059669;}
+.btn-stop{background:#dc2626;}
+.btn-export{background:#0ea5e9;}
+.btn-copy-log{background:#475569;}
+.status-bar{padding:8px 12px;background:#1f2937;border-radius:6px;margin-bottom:10px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;}
+.status-bar .src-note{color:#64748b;font-size:11px;}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.chip{padding:4px 12px;border-radius:999px;border:1px solid #374151;background:#1e2227;color:#94a3b8;font-size:12px;cursor:pointer;user-select:none;}
+.chip.active{background:#2563eb;border-color:#2563eb;color:#fff;}
+.log-wrap{background:#0a0b0d;border:1px solid #333;padding:10px;height:200px;overflow:auto;border-radius:8px;margin-bottom:12px;white-space:pre-wrap;font-family:Consolas,Menlo,monospace;font-size:11px;line-height:1.5;}
+.log-success{color:#4ade80;}
+.log-warn{color:#facc15;}
+.log-error{color:#f87171;}
+.log-info{color:#94a3b8;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;}
+.card{background:#1e2227;border:1px solid #333;border-radius:10px;padding:12px;position:relative;transition:border-color .3s;}
+.card.red{border-color:#ef4444;background:#2c1818;}
+.card .card-title{font-size:13px;color:#cbd5e1;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:6px;}
+.card .card-title .tag{font-size:10px;color:#64748b;background:#262b31;padding:1px 6px;border-radius:4px;}
+.card .card-value{font-size:24px;font-weight:700;margin-bottom:2px;font-variant-numeric:tabular-nums;}
+.card .card-change{font-size:12px;margin-bottom:2px;font-variant-numeric:tabular-nums;}
+.card .card-change.up{color:#f87171;}
+.card .card-change.down{color:#34d399;}
+.card .card-change.flat{color:#94a3b8;}
+.card .card-unit{font-size:11px;color:#94a3b8;margin-bottom:2px;}
+.card .card-src{font-size:10px;color:#4b5563;margin-top:2px;}
+.chart-box{width:100%;height:120px;margin-top:6px;}
+.card .card-warn{font-size:10px;color:#7f1d1d;background:#450a0a;padding:2px 6px;border-radius:4px;position:absolute;top:8px;right:8px;}
+.hidden{display:none!important;}
+@media(max-width:640px){
+  body{padding:10px;}
+  .header h2{font-size:16px;}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;}
+  .card-value{font-size:18px;}
+  .chart-box{height:90px;}
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h2>中美核心 54 项宏观金融指标看板</h2>
+      <div class="sub">高频行情（美股·美债·外汇·大宗·全球股指）＋ 低频宏观（中国·美国·航运）｜数据源：东方财富 / 腾讯行情 / FRED(圣路易斯联储) / 新浪宏观</div>
+    </div>
+    <div>
+      <button class="btn btn-refresh" id="refreshHighFreq">刷新【高频行情】</button>
+      <button class="btn btn-refresh-all-low" id="refreshAllLowFreq">重新加载【低频宏观】</button>
+      <button class="btn btn-auto" id="toggleAutoRefresh">开启自动刷新(15min)</button>
+      <button class="btn btn-stop" id="stopTask">停止任务</button>
+      <button class="btn btn-export" id="exportExcel">导出快照Excel</button>
+      <button class="btn btn-copy-log" id="copyLogBtn">复制日志</button>
+    </div>
+  </div>
+  <div class="chips" id="chipBar">
+    <span class="chip active" data-cat="all">全部</span>
+    <span class="chip" data-cat="us_stock">美股指数</span>
+    <span class="chip" data-cat="us_bond">美债与利率</span>
+    <span class="chip" data-cat="fx">外汇汇率</span>
+    <span class="chip" data-cat="commodity">大宗商品</span>
+    <span class="chip" data-cat="global_index">全球股指</span>
+    <span class="chip" data-cat="us_macro">美国宏观</span>
+    <span class="chip" data-cat="cn_macro">中国宏观</span>
+    <span class="chip" data-cat="shipping">航运物流</span>
+  </div>
+  <div class="status-bar"><span id="statusBar">状态：空闲｜自动刷新：关闭</span><span class="src-note">FRED 数据经公共 CORS 代理 cors.eu.org 转发，偶发延迟属正常</span></div>
+  <div class="log-wrap" id="logPanel"></div>
+  <div class="grid" id="indicatorGrid"></div>
+</div>
+<script>
+// ==================== 配置区 ====================
+const CORS_PROXY = "https://cors.eu.org/";               // FRED 跨域代理（主）
+const CORS_PROXY2 = "https://api.allorigins.win/raw?url="; // 备用代理
+const AUTO_REFRESH_INTERVAL = 15 * 60 * 1000;
+const CACHE_HIGH_TTL = 10 * 60 * 1000;
+const CACHE_LOW_TTL = 60 * 60 * 1000;
+const HIST_LEN = 20; // 迷你图点数
+
+// 指标清单（54 项）
+// src: em=东方财富行情 / tx=腾讯行情 / fred=FRED代理 / emdc=东方财富数据中心(JSONP) / sina=新浪宏观(JSONP)
+const indicatorList = [
+  // ========== 高频：美股指数 ==========
+  {id:"nasdaq", name:"纳斯达克指数", src:"em",  secid:"100.NDX",     warnLow:10000, warnHigh:22000, unit:"点", cat:"us_stock", highFreq:true},
+  {id:"sp500",  name:"标普500指数",  src:"em",  secid:"100.SPX",     warnLow:3000,  warnHigh:6500,  unit:"点", cat:"us_stock", highFreq:true},
+  {id:"vix",    name:"VIX恐慌指数",  src:"tx",  code:"usVIX",        warnLow:12,    warnHigh:35,    unit:"点", cat:"us_stock", highFreq:true},
+  // ========== 高频：全球股指 ==========
+  {id:"sse",      name:"上证指数",   src:"em",  secid:"1.000001",    warnLow:2400, warnHigh:3800,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"csi500",   name:"中证500指数", src:"em",  secid:"1.000905",    warnLow:4000, warnHigh:7500,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"hk_hsi",   name:"恒生指数",   src:"em",  secid:"100.HSI",     warnLow:14000,warnHigh:26000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"nikkei225",name:"日经225",    src:"em",  secid:"100.N225",    warnLow:22000,warnHigh:42000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"kospi",    name:"韩国KOSPI",  src:"em",  secid:"100.KS11",    warnLow:1800, warnHigh:3200,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"australia_asx",name:"澳洲ASX200",src:"em",secid:"100.AS51",    warnLow:5000, warnHigh:8000,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"canada_tsx",name:"加拿大TSX", src:"tx",  code:"caTSX",        warnLow:15000,warnHigh:23000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"germany_dax",name:"德国DAX",  src:"em",  secid:"100.GDAXI",   warnLow:10000,warnHigh:18000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"france_cac40",name:"法国CAC40",src:"em", secid:"100.FCHI",    warnLow:4000, warnHigh:8000,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"italy_mib",name:"意大利富时MIB",src:"tx",code:"itMIB",        warnLow:16000,warnHigh:30000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"spain_ibex",name:"西班牙IBEX35",src:"em",secid:"100.IBEX",    warnLow:7000, warnHigh:12000, unit:"点", cat:"global_index", highFreq:true},
+  {id:"eurostoxx50",name:"欧洲斯托克50",src:"em",secid:"100.SX5E",   warnLow:2500, warnHigh:4800,  unit:"点", cat:"global_index", highFreq:true},
+  {id:"ftse100", name:"富时100",     src:"tx",  code:"gbFTSE",       warnLow:5000, warnHigh:8500,  unit:"点", cat:"global_index", highFreq:true},
+  // ========== 高频：美债与利率 ==========
+  {id:"us10y", name:"美债10年期收益率", src:"fred", series:"DGS10", warnLow:1, warnHigh:5.5, unit:"%", cat:"us_bond", highFreq:true},
+  {id:"us2y",  name:"美债2年期收益率",  src:"fred", series:"DGS2",  warnLow:0.5,warnHigh:6,   unit:"%", cat:"us_bond", highFreq:true},
+  // ========== 高频：外汇汇率 ==========
+  {id:"dxy",     name:"美元指数DXY",   src:"em", secid:"100.UDI",    warnLow:90,  warnHigh:115,  unit:"", cat:"fx", highFreq:true},
+  {id:"eur_usd", name:"欧元兑美元",    src:"em", secid:"119.EURUSD", warnLow:0.95,warnHigh:1.15, unit:"", cat:"fx", highFreq:true},
+  {id:"usd_cnh", name:"美元兑离岸人民币", src:"em", secid:"133.CNHUSD", warnLow:6.5, warnHigh:7.4, unit:"", cat:"fx", highFreq:true, invert:true},
+  // ========== 高频：大宗商品 ==========
+  {id:"gold",    name:"纽约黄金",     src:"tx", code:"hf_GC",   warnLow:1600,warnHigh:2600, unit:"美元/盎司", cat:"commodity", highFreq:true},
+  {id:"silver",  name:"纽约白银",     src:"tx", code:"hf_SI",   warnLow:15,  warnHigh:35,   unit:"美元/盎司", cat:"commodity", highFreq:true},
+  {id:"brent",   name:"布伦特原油",   src:"tx", code:"hf_OIL",  warnLow:50,  warnHigh:130,  unit:"美元/桶", cat:"commodity", highFreq:true},
+  {id:"wti",     name:"WTI原油",      src:"tx", code:"hf_CL",   warnLow:45,  warnHigh:125,  unit:"美元/桶", cat:"commodity", highFreq:true},
+  {id:"copper",  name:"COMEX铜",      src:"tx", code:"hf_CAD",  warnLow:300, warnHigh:600,  unit:"美分/磅", cat:"commodity", highFreq:true},
+  {id:"corn",    name:"CBOT玉米",     src:"tx", code:"hf_C",    warnLow:300, warnHigh:700,  unit:"美分/蒲式耳", cat:"commodity", highFreq:true},
+  {id:"soybean", name:"CBOT大豆",     src:"tx", code:"hf_S",    warnLow:800, warnHigh:1800, unit:"美分/蒲式耳", cat:"commodity", highFreq:true},
+  // ========== 低频：美国宏观（FRED） ==========
+  {id:"us_pmi",        name:"美国制造业景气(费城联储)",  src:"fred", series:"GACDFSA066MSFRBPHI", warnLow:-10, warnHigh:25, unit:"", cat:"us_macro", highFreq:false},
+  {id:"fred_m2_us",    name:"美国M2货币供应量",  src:"fred", series:"M2SL",            warnLow:15000,warnHigh:26000,unit:"十亿美元", cat:"us_macro", highFreq:false},
+  {id:"us_cpi",        name:"美国CPI同比",       src:"fred", series:"CPIAUCSL",        warnLow:1,   warnHigh:8,   unit:"%", cat:"us_macro", highFreq:false, yoy:true},
+  {id:"us_corecpi",    name:"美国核心CPI同比",   src:"fred", series:"CPILFESL",        warnLow:1,   warnHigh:7,   unit:"%", cat:"us_macro", highFreq:false, yoy:true},
+  {id:"us_unemp",      name:"美国失业率",        src:"fred", series:"UNRATE",          warnLow:3,   warnHigh:6,   unit:"%", cat:"us_macro", highFreq:false},
+  {id:"us_nonfarm",    name:"美国非农就业(月环比)", src:"fred", series:"PAYEMS",       warnLow:-100,warnHigh:400, unit:"千人", cat:"us_macro", highFreq:false, mom:true},
+  {id:"us_housing_start",name:"美国新屋开工",    src:"fred", series:"HOUST",           warnLow:800, warnHigh:1800, unit:"千套", cat:"us_macro", highFreq:false},
+  {id:"us_retail",     name:"美国零售销售同比",  src:"fred", series:"RSAFS",           warnLow:-5,  warnHigh:10,  unit:"%", cat:"us_macro", highFreq:false, yoy:true},
+  {id:"us_cap_util",   name:"美国产能利用率",    src:"fred", series:"TCU",             warnLow:74,  warnHigh:80,  unit:"%", cat:"us_macro", highFreq:false},
+  {id:"us_pce",        name:"美国核心PCE同比",   src:"fred", series:"PCEPILFE",        warnLow:1,   warnHigh:5,   unit:"%", cat:"us_macro", highFreq:false, yoy:true},
+  {id:"us_consumer_sent",name:"美国消费者信心",  src:"fred", series:"UMCSENT",         warnLow:50,  warnHigh:110, unit:"", cat:"us_macro", highFreq:false},
+  {id:"us_oil_inventory",name:"美国联邦基金利率(月均)", src:"fred", series:"FEDFUNDS",       warnLow:0,   warnHigh:6,   unit:"%", cat:"us_macro", highFreq:false},
+  {id:"us_gdp_qoq",    name:"美国GDP环比年化",   src:"fred", series:"A191RL1Q225SBEA", warnLow:-2,  warnHigh:5,   unit:"%", cat:"us_macro", highFreq:false},
+  {id:"eur_cpi",       name:"欧元区HICP同比",    src:"fred", series:"CP0000EZ19M086NEST", warnLow:0, warnHigh:6, unit:"%", cat:"us_macro", highFreq:false, yoy:true},
+  // ========== 低频：中国宏观（东方财富数据中心 JSONP） ==========
+  {id:"china_pmi",     name:"中国制造业PMI",  src:"emdc", reportName:"RPT_ECONOMY_PMI",          field:"MAKE_INDEX",           warnLow:48, warnHigh:52, unit:"", cat:"cn_macro", highFreq:false},
+  {id:"china_cpi",     name:"中国CPI同比",    src:"emdc", reportName:"RPT_ECONOMY_CPI",          field:"NATIONAL_SAME",        warnLow:-1, warnHigh:3,  unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_ppi",     name:"中国PPI同比",    src:"emdc", reportName:"RPT_ECONOMY_PPI",          field:"BASE_SAME",            warnLow:-5, warnHigh:2,  unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_m2",      name:"中国M2同比",     src:"emdc", reportName:"RPT_ECONOMY_CURRENCY_SUPPLY", field:"BASIC_CURRENCY_SAME", warnLow:8,  warnHigh:13, unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_exports", name:"中国出口同比",   src:"emdc", reportName:"RPT_ECONOMY_CUSTOMS",      field:"EXIT_BASE_SAME",       warnLow:-15,warnHigh:15, unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_imports", name:"中国进口同比",   src:"emdc", reportName:"RPT_ECONOMY_CUSTOMS",      field:"IMPORT_BASE_SAME",     warnLow:-15,warnHigh:15, unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_social_fin", name:"新增人民币贷款同比", src:"emdc", reportName:"RPT_ECONOMY_RMB_LOAN", field:"RMB_LOAN_SAME", warnLow:-20, warnHigh:60, unit:"%", cat:"cn_macro", highFreq:false},
+  {id:"china_lpr",     name:"1年期LPR",       src:"emdc", reportName:"RPTA_WEB_RATE",           field:"LPR1Y",                warnLow:2.5, warnHigh:4.5, unit:"%", cat:"cn_macro", highFreq:false},
+  // ========== 低频：航运物流 ==========
+  {id:"bdi",       name:"波罗的海干散货BDI",  src:"emdc", reportName:"RPT_INDUSTRY_INDEX", field:"INDICATOR_VALUE", filter:'(INDICATOR_ID="EMI00107664")', warnLow:800, warnHigh:3000, unit:"点", cat:"shipping", highFreq:false},
+  {id:"bdti",      name:"原油运输指数BDTI",   src:"emdc", reportName:"RPT_INDUSTRY_INDEX", field:"INDICATOR_VALUE", filter:'(INDICATOR_ID="EMI00107668")', warnLow:500, warnHigh:5000, unit:"点", cat:"shipping", highFreq:false},
+  {id:"china_railway", name:"全社会货运量(当月)", src:"sina", field:"freight", warnLow:35, warnHigh:55, unit:"亿吨", cat:"shipping", highFreq:false},
+  {id:"china_port_throughput", name:"沿海港口货物吞吐量(当月)", src:"sina", field:"port", warnLow:10, warnHigh:18, unit:"亿吨", cat:"shipping", highFreq:false}
+];
+
+// ==================== 全局变量 ====================
+const cache = new Map();
+const indicatorData = {};
+const logPanel = document.getElementById('logPanel');
+const gridEl = document.getElementById('indicatorGrid');
+const statusBar = document.getElementById('statusBar');
+let chartInstances = {};
+let isRunning = false;
+let autoRefreshTimer = null;
+let logTextBuffer = "";
+let currentCat = "all";
+
+function setStatus(text){ statusBar.firstChild.textContent = "状态：" + text; }
+
+function log(msg, type="info"){
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('zh-CN', {hour12:false});
+  const line = `[${timeStr}] ${msg}`;
+  logTextBuffer += line + "\n";
+  const span = document.createElement('span');
+  span.className = "log-" + type;
+  span.textContent = line + "\n";
+  logPanel.appendChild(span);
+  logPanel.scrollTop = logPanel.scrollHeight;
+}
+
+// ==================== 数据获取层 ====================
+// 东方财富 push2 批量行情（直连，CORS=*）
+async function fetchEMBatch(secids){
+  const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${secids.join(",")}&fields=f2,f3,f4,f12,f13,f14`;
+  const res = await fetch(url);
+  const json = await res.json();
+  const map = {};
+  if(json.data && json.data.diff){
+    for(const d of json.data.diff){
+      const v = {price: d.f2, chg: d.f3};
+      map[d.f12] = v;
+      if(d.f13 !== undefined) map[`${d.f13}.${d.f12}`] = v;
+    }
+  }
+  return map;
+}
+// 东方财富 push2his 历史K线（直连）
+async function fetchEMHistory(secid, len=HIST_LEN){
+  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&klt=101&fqt=1&lmt=${len}&end=20500101&fields1=f1,f2,f3&fields2=f51,f52,f53`;
+  const res = await fetch(url);
+  const json = await res.json();
+  if(json.data && json.data.klines){
+    return json.data.klines.map(k => parseFloat(k.split(",")[2]));
+  }
+  return [];
+}
+// 腾讯批量行情（直连，CORS=*）
+async function fetchTXBatch(codes){
+  const url = `https://qt.gtimg.cn/q=${codes.join(",")}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  const map = {};
+  const re = /v_([a-zA-Z0-9_]+)="([^"]*)"/g;
+  let m;
+  while((m = re.exec(text)) !== null){
+    const val = m[2];
+    if(!val) continue;
+    if(val.includes("~")){
+      // 指数格式：~ 分隔；涨跌幅位于时间戳后第二字段（~日期~涨跌额~涨跌幅~）
+      const parts = val.split("~");
+      const tm = val.match(/~(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})~([\d.-]+)~([\d.-]+)~/);
+      map[m[1]] = {price: parseFloat(parts[3]), chg: tm ? parseFloat(tm[3]) : NaN};
+    }else{
+      // 商品格式：, 分隔
+      const parts = val.split(",");
+      map[m[1]] = {price: parseFloat(parts[0]), chg: parseFloat(parts[1])};
+    }
+  }
+  return map;
+}
+// 腾讯历史K线（直连）
+async function fetchTXHistory(code, len=HIST_LEN){
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,${len},qfq`;
+  const res = await fetch(url);
+  const json = await res.json();
+  const node = json.data[code];
+  const arr = node && (node.day || node.qfqday);
+  if(arr && arr.length){
+    return arr.map(k => parseFloat(k[2]));
+  }
+  return [];
+}
+// FRED 系列（经 CORS 代理），yoy/mom 计算；返回 {value, history}
+async function fetchFREDSeries(series, len=HIST_LEN+13){
+  const base = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=3bfcf47458e7e97a5a4ad69174d28fe0&file_type=json&sort_order=desc&limit=${len}`;
+  let json = null;
+  for(const proxy of [CORS_PROXY, CORS_PROXY2]){
+    try{
+      const res = await fetch(proxy + encodeURIComponent(base), {signal: AbortSignal.timeout(20000)});
+      json = await res.json();
+      if(json && json.observations) break;
+    }catch(e){ /* 换下一个代理 */ }
+  }
+  if(!json || !json.observations || !json.observations.length) return null;
+  const obs = json.observations.slice().reverse().map(o => parseFloat(o.value));
+  const valid = obs.filter(v => !isNaN(v));
+  if(!valid.length) return null;
+  return {value: valid[valid.length-1], history: valid};
+}
+// 东方财富数据中心 JSONP（script 标签直连，无需代理）
+function fetchEMDC(cfg){
+  return new Promise((resolve, reject) => {
+    const cb = "cb_" + Math.random().toString(36).slice(2,10);
+    const params = new URLSearchParams({
+      reportName: cfg.reportName,
+      columns: "ALL",
+      pageSize: String(cfg.len || HIST_LEN),
+      pageNumber: "1",
+      sortColumns: "REPORT_DATE",
+      sortTypes: "-1",
+      source: "WEB",
+      client: "WEB",
+      p: "1",
+      pageNo: "1",
+      pageNum: "1"
+    });
+    if(cfg.filter) params.set("filter", cfg.filter);
+    params.set("callback", cb);
+    const s = document.createElement('script');
+    const timer = setTimeout(()=>{ s.remove(); delete window[cb]; reject(new Error("emdc timeout")); }, 15000);
+    window[cb] = (data) => {
+      clearTimeout(timer); s.remove(); delete window[cb];
+      resolve(data);
+    };
+    s.onerror = () => { clearTimeout(timer); s.remove(); delete window[cb]; reject(new Error("emdc script error")); };
+    s.src = `https://datacenter-web.eastmoney.com/api/data/v1/get?${params.toString()}`;
+    document.head.appendChild(s);
+  });
+}
+// 新浪宏观 JSONP（货运/港口）
+function fetchSinaMacro(){
+  return new Promise((resolve, reject) => {
+    const cb = "cb_" + Math.random().toString(36).slice(2,10);
+    const s = document.createElement('script');
+    const timer = setTimeout(()=>{ s.remove(); delete window[cb]; reject(new Error("sina timeout")); }, 15000);
+    window[cb] = (data) => {
+      clearTimeout(timer); s.remove(); delete window[cb];
+      resolve(data);
+    };
+    s.onerror = () => { clearTimeout(timer); s.remove(); delete window[cb]; reject(new Error("sina script error")); };
+    s.src = `https://quotes.sina.cn/mac/api/jsonp_v3.php/${cb}/MacPage_Service.get_pagedata?cate=industry&event=10&from=0&num=1&condition=`;
+    document.head.appendChild(s);
+  });
+}
+// ============ 处理 FRED 派生指标（yoy/mom） ============
+function deriveFRED(item, series){
+  if(!series || series.length < 2) return series;
+  if(item.yoy){
+    // 同比：当前值 / 12期前 - 1
+    return series.map((v,i) => (i>=12 && series[i-12]!==0) ? (v/series[i-12]-1)*100 : NaN).filter(v=>!isNaN(v));
+  }
+  if(item.mom){
+    // 月环比（非农：千人）
+    return series.map((v,i) => i>=1 ? (v-series[i-1]) : NaN).filter(v=>!isNaN(v));
+  }
+  return series;
+}
+
+// ==================== 渲染层 ====================
+const CAT_NAMES = {us_stock:"美股指数", us_bond:"美债与利率", fx:"外汇汇率", commodity:"大宗商品", global_index:"全球股指", us_macro:"美国宏观", cn_macro:"中国宏观", shipping:"航运物流"};
+
+function renderCards(){
+  gridEl.innerHTML = "";
+  const list = currentCat === "all" ? indicatorList : indicatorList.filter(i=>i.cat===currentCat);
+  list.forEach(item=>{
+    const card = document.createElement('div');
+    card.className = "card";
+    card.id = `card-${item.id}`;
+    card.innerHTML = `
+      <div class="card-title"><span>${item.name}</span><span class="tag">${CAT_NAMES[item.cat]||""}</span></div>
+      <div class="card-value" id="val-${item.id}">--</div>
+      <div class="card-change" id="chg-${item.id}"></div>
+      <div class="card-unit">${item.unit||""}</div>
+      <div class="chart-box" id="chart-${item.id}"></div>
+      <div class="card-src" id="src-${item.id}"></div>
+    `;
+    gridEl.appendChild(card);
+  });
+}
+
+function updateCard(item, value, history=[], meta={}){
+  const cardEl = document.getElementById(`card-${item.id}`);
+  if(!cardEl) return;
+  const valEl = document.getElementById(`val-${item.id}`);
+  let display = value;
+  if(item.invert && value !== 0) display = 1/value;
+  valEl.textContent = isFinite(display) ? display.toFixed(2) : "--";
+  const chgEl = document.getElementById(`chg-${item.id}`);
+  if(meta.chg !== undefined && isFinite(meta.chg)){
+    chgEl.textContent = (meta.chg>0?"+":"") + meta.chg.toFixed(2) + "%";
+    chgEl.className = "card-change " + (meta.chg>0.05?"up":(meta.chg<-0.05?"down":"flat"));
+  }
+  // 阈值告警
+  cardEl.classList.remove("red");
+  const warnSpan = cardEl.querySelector(".card-warn");
+  if(warnSpan) warnSpan.remove();
+  const v = item.invert && value !== 0 ? 1/value : value;
+  if(v < item.warnLow || v > item.warnHigh){
+    cardEl.classList.add("red");
+    const w = document.createElement('span');
+    w.className = "card-warn";
+    w.textContent = "超警戒";
+    cardEl.appendChild(w);
+  }
+  // 来源与时间
+  const srcEl = document.getElementById(`src-${item.id}`);
+  if(srcEl){
+    const t = meta.time ? new Date(meta.time).toLocaleString('zh-CN',{hour12:false}) : "";
+    srcEl.textContent = (meta.srcLabel? meta.srcLabel + " · " : "") + t;
+  }
+  // 迷你图
+  drawChart(item, history);
+  indicatorData[item.id] = {value, history};
+}
+
+function drawChart(item, history){
+  const chartDom = document.getElementById(`chart-${item.id}`);
+  if(!chartDom || !history || history.length < 2) return;
+  if(chartInstances[item.id]) chartInstances[item.id].dispose();
+  chartInstances[item.id] = echarts.init(chartDom);
+  const up = history[history.length-1] >= history[0];
+  chartInstances[item.id].setOption({
+    animation:false,
+    tooltip:{trigger:'axis', formatter: params => {
+      const p = params[0];
+      return p.data[0] + "<br/>" + p.data[1].toFixed(2);
+    }},
+    grid:{top:6,right:4,bottom:18,left:38},
+    xAxis:{type:'category', data: history.map((_,i)=>i), axisLabel:{show:false}, axisLine:{lineStyle:{color:'#333'}}},
+    yAxis:{type:'value', scale:true, axisLabel:{fontSize:9, color:'#64748b'}, splitLine:{lineStyle:{color:'#262b31'}}},
+    series:[{type:'line', data: history, smooth:true, symbol:'none',
+      lineStyle:{width:1.4, color: up ? '#f87171' : '#34d399'},
+      areaStyle:{color: up ? 'rgba(248,113,113,.12)' : 'rgba(52,211,153,.12)'}}]
+  });
+}
+
+// ==================== 指标拉取 ====================
+async function fetchOne(item){
+  try{
+    let result = null;
+    if(item.src === "em"){
+      const map = await fetchEMBatch([item.secid]);
+      const d = map[item.secid];
+      if(d && isFinite(d.price)){
+        let hist = [];
+        try{ hist = await fetchEMHistory(item.secid); }catch(e){}
+        result = {value: d.price, history: hist.length?hist:[d.price], chg: d.chg};
+      }
+    } else if(item.src === "tx"){
+      const map = await fetchTXBatch([item.code]);
+      const d = map[item.code];
+      if(d && isFinite(d.price)){
+        let hist = [];
+        try{ hist = await fetchTXHistory(item.code); }catch(e){}
+        result = {value: d.price, history: hist.length?hist:[d.price], chg: d.chg};
+      }
+    } else if(item.src === "fred"){
+      const raw = await fetchFREDSeries(item.series);
+      if(raw){
+        const series = deriveFRED(item, raw.history);
+        const value = series[series.length-1];
+        result = {value, history: series};
+      }
+    } else if(item.src === "emdc"){
+      const data = await fetchEMDC({reportName: item.reportName, filter: item.filter});
+      if(data && data.result && data.result.data && data.result.data.length){
+        const rows = data.result.data;
+        const hist = rows.slice().reverse().map(r => parseFloat(r[item.field])).filter(v=>!isNaN(v));
+        if(hist.length) result = {value: hist[hist.length-1], history: hist};
+      }
+    } else if(item.src === "sina"){
+      const data = await fetchSinaMacro();
+      if(data && data.data && data.data["非累计"] && data.data["非累计"].length){
+        const row = data.data["非累计"][0];
+        // 字段下标：2=货运量(亿吨) 10=沿海主要港口货物吞吐量(亿吨)
+        const idx = item.field === "freight" ? 2 : 10;
+        const val = parseFloat(row[idx]);
+        if(isFinite(val)) result = {value: val, history: [val]};
+      }
+    }
+    if(result && isFinite(result.value)){
+      return result;
+    }
+    log(`${item.name} 暂无数据`, "error");
+    return null;
+  }catch(err){
+    log(`${item.name} 请求异常: ${err.message}`, "error");
+    return null;
+  }
+}
+
+// 高频行情刷新（批量并行）
+async function refreshHighFreq(){
+  if(isRunning){ log("任务执行中，禁止重复启动", "warn"); return; }
+  isRunning = true;
+  setStatus("正在拉取高频行情…");
+  log("===== 刷新【高频行情】（东方财富/腾讯直连，FRED经代理） =====", "success");
+  const highList = indicatorList.filter(i=>i.highFreq);
+  // 并发拉取（每批 6 个）
+  const batchSize = 6;
+  for(let i=0;i<highList.length;i+=batchSize){
+    if(!isRunning) break;
+    const batch = highList.slice(i, i+batchSize);
+    const results = await Promise.all(batch.map(item => fetchOne(item)));
+    batch.forEach((item, j) => {
+      const res = results[j];
+      if(res){
+        cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
+        updateCard(item, res.value, res.history, {chg: res.chg, srcLabel: srcLabelOf(item), time: Date.now()});
+        log(`${item.name}: ${res.value.toFixed(2)}${item.unit||""}`, "success");
+      }
+    });
+    await sleep(300);
+  }
+  log("高频行情刷新完成", "success");
+  isRunning = false;
+  setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
+}
+
+function srcLabelOf(item){
+  if(item.src === "em") return "东方财富";
+  if(item.src === "tx") return "腾讯行情";
+  if(item.src === "fred") return "FRED";
+  if(item.src === "emdc") return "东方财富宏观";
+  if(item.src === "sina") return "新浪宏观";
+  return "";
+}
+
+// 低频宏观刷新（FRED 走代理串行，中国宏观 JSONP 并行）
+async function refreshLowFreq(){
+  if(isRunning){ log("任务执行中，禁止重复启动", "warn"); return; }
+  isRunning = true;
+  setStatus("正在拉取低频宏观…");
+  log("===== 加载【低频宏观】（FRED / 东方财富宏观 / 新浪宏观） =====", "success");
+  const lowList = indicatorList.filter(i=>!i.highFreq);
+  for(const item of lowList){
+    if(!isRunning) break;
+    const cacheItem = cache.get(item.id);
+    if(cacheItem && (Date.now() - cacheItem.time) < CACHE_LOW_TTL){
+      updateCard(item, cacheItem.value, cacheItem.history, {chg:cacheItem.chg, srcLabel: cacheItem.srcLabel, time: cacheItem.time});
+      log(`${item.name} 使用缓存`, "info");
+      continue;
+    }
+    const res = await fetchOne(item);
+    if(res){
+      const meta = {srcLabel: srcLabelOf(item), time: Date.now(), chg: res.chg};
+      cache.set(item.id, {...res, time: Date.now(), srcLabel: srcLabelOf(item)});
+      updateCard(item, res.value, res.history, meta);
+      log(`${item.name}: ${res.value.toFixed(2)}${item.unit||""}`, "success");
+    }
+    await sleep(150);
+  }
+  log("低频宏观加载完成（缓存60分钟）", "success");
+  isRunning = false;
+  setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
+}
+
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+// ==================== 交互 ====================
+document.getElementById("copyLogBtn").addEventListener("click", async ()=>{
+  try{
+    await navigator.clipboard.writeText(logTextBuffer);
+    log("日志已复制到剪贴板", "success");
+  }catch(e){ log("复制日志失败: " + e.message, "error"); }
+});
+document.getElementById("stopTask").addEventListener("click", ()=>{
+  isRunning = false;
+  log("已手动停止当前任务", "warn");
+  setStatus(autoRefreshTimer ? "空闲｜自动刷新开启" : "空闲");
+});
+document.getElementById("toggleAutoRefresh").addEventListener("click", ()=>{
+  if(autoRefreshTimer){
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+    log("自动刷新已关闭", "warn");
+    document.getElementById("toggleAutoRefresh").innerText = "开启自动刷新(15min)";
+    document.getElementById("toggleAutoRefresh").className = "btn btn-auto";
+    setStatus("空闲｜自动刷新：关闭");
+  }else{
+    autoRefreshTimer = setInterval(()=>{ refreshHighFreq(); }, AUTO_REFRESH_INTERVAL);
+    log("自动刷新已开启，每15分钟刷新高频行情", "success");
+    document.getElementById("toggleAutoRefresh").innerText = "关闭自动刷新(15min)";
+    document.getElementById("toggleAutoRefresh").className = "btn btn-auto on";
+    setStatus("空闲｜自动刷新：开启");
+  }
+});
+document.getElementById("refreshHighFreq").addEventListener("click", refreshHighFreq);
+document.getElementById("refreshAllLowFreq").addEventListener("click", refreshLowFreq);
+document.getElementById("exportExcel").addEventListener("click", ()=>{
+  const exportArr = [];
+  for(const item of indicatorList){
+    const d = indicatorData[item.id];
+    exportArr.push({
+      指标名称: item.name,
+      当前值: d ? (isFinite(d.value) ? d.value.toFixed(2) : "--") : "--",
+      单位: item.unit || "",
+      分类: CAT_NAMES[item.cat] || "",
+      低警戒线: item.warnLow,
+      高警戒线: item.warnHigh,
+      更新类型: item.highFreq ? "高频行情" : "低频宏观"
+    });
+  }
+  const ws = XLSX.utils.json_to_sheet(exportArr);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "54指标快照");
+  XLSX.writeFile(wb, "54宏观指标快照.xlsx");
+  log("Excel快照导出完成", "success");
+});
+// 分类筛选
+document.getElementById("chipBar").addEventListener("click", (e)=>{
+  const chip = e.target.closest(".chip");
+  if(!chip) return;
+  document.querySelectorAll(".chip").forEach(c=>c.classList.remove("active"));
+  chip.classList.add("active");
+  currentCat = chip.dataset.cat;
+  renderCards();
+  // 重绘已加载的卡片
+  indicatorList.filter(i=>currentCat==="all"||i.cat===currentCat).forEach(item=>{
+    const d = indicatorData[item.id];
+    if(d){
+      const cacheItem = cache.get(item.id);
+      updateCard(item, d.value, d.history, {chg: cacheItem&&cacheItem.chg, srcLabel: cacheItem&&cacheItem.srcLabel, time: cacheItem&&cacheItem.time});
+    }
+  });
+});
+
+// ==================== 初始化 ====================
+window.onload = async function(){
+  renderCards();
+  log("54项指标看板加载完成，开始加载低频宏观数据", "success");
+  await refreshLowFreq();
+  log("如需最新行情请点击【刷新高频行情】或开启自动刷新", "info");
+};
+</script>
+</body>
+</html>
