@@ -187,7 +187,7 @@ def pull_yahoo_hist(key, sym):
     return {"dates": dates, "values": values}
 
 def pull_tx_hist(key, code):
-    param = f"{code},day,2020-01-01,2026-12-31,3200,qfq"
+    param = f"{code},day,2020-01-01,2026-12-31,2000,qfq"
     url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={param}"
     d = fetch_json(url)
     data = d.get("data") or {}
