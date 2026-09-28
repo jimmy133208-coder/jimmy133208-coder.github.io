@@ -24,5 +24,6 @@ jobs:
             echo "no data changes"
           else
             git commit -m "auto: sync macro data $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase origin main || true
             git push
           fi
