@@ -652,7 +652,7 @@ async function refreshLowFreq(){
   try{
     log(`===== 重新加载【宏观数据】（${rangeLabel()}） =====`, "success");
     try{
-      await fetchSyncData();
+      SYNC_DATA = await fetchSyncData();
       log("仓库同步数据获取成功", "success");
     }catch(e){
       log("仓库同步数据获取失败: " + e.message, "error");
