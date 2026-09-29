@@ -812,8 +812,11 @@ function validateRange(r){
   const s = `${r.sy}-${pad2(r.sm)}-${pad2(r.sd)}`, e = `${r.ey}-${pad2(r.em)}-${pad2(r.ed)}`;
   if(s > e) return "起始时间不能晚于结束时间";
   if(r.sm < 1 || r.sm > 12 || r.em < 1 || r.em > 12) return "月份需在 1~12 之间";
-  const daysIn = (y,m)=>{ const d = new Date(y, m, 0).getDate(); return d; };
-  if(r.sd < 1 || r.sd > daysIn(r.sy, r.sm) || r.ed < 1 || r.ed > daysIn(r.ey, r.em)) return "日期超出该月天数";
+  // 日粒度才校验具体天数（年/月粒度下日下拉隐藏，sd=1/ed=31 为占位语义）
+  if(r.g === "day"){
+    const daysIn = (y,m)=>{ const d = new Date(y, m, 0).getDate(); return d; };
+    if(r.sd < 1 || r.sd > daysIn(r.sy, r.sm) || r.ed < 1 || r.ed > daysIn(r.ey, r.em)) return "日期超出该月天数";
+  }
   return null;
 }
 
