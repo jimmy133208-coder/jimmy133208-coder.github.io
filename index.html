@@ -287,10 +287,13 @@ async function fetchTXBatch(codes){
     const val = m[2];
     if(!val) continue;
     if(val.includes("~")){
+      // 标准 ~ 分隔（A股/港股/美股指数）：[3]最新价 [31]涨跌额 [32]涨跌幅%
       const parts = val.split("~");
-      const tm = val.match(/~(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})~([\d.-]+)~([\d.-]+)~/);
-      map[m[1]] = {price: parseFloat(parts[3]), chg: tm ? parseFloat(tm[3]) : NaN};
+      const price = parseFloat(parts[3]);
+      const chg = parseFloat(parts[32]);
+      map[m[1]] = {price, chg: isFinite(chg) ? chg : NaN};
     }else{
+      // 逗号分隔（商品期货 hf_）：[0]最新价 [1]涨跌幅%
       const parts = val.split(",");
       map[m[1]] = {price: parseFloat(parts[0]), chg: parseFloat(parts[1])};
     }
@@ -409,7 +412,7 @@ function aggregateSeries(dates, values, period){
       if(lastKey !== null && key !== lastKey){ nd.push(dates[i-1]); nv.push(values[i-1]); }
       lastKey = key;
     }
-    nd.push(dates[dates.length-1]); nv.push(values[values.length-1]);
+    nd.push(dates[dates.length-1]); nv.push(values[dates.length-1]);
   }
   return {dates:nd, values:nv};
 }
